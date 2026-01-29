@@ -13,16 +13,16 @@ def fetch_reddit_subreddit(sub, limit=10):
     单个 Subreddit 获取函数，用于并发执行
     """
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
     }
     posts_list = []
     print(f"Fetching r/{sub}...")
     try:
         # 使用 top.json?t=day 获取过去 24 小时内热度最高的内容
         # limit 稍微调大一点，以防过滤后数量太少
-        url = f"https://www.reddit.com/r/{sub}/top.json?t=day&limit={limit*2}"
-        # 缩短超时时间为 2 秒
-        response = requests.get(url, headers=headers, timeout=2)
+        url = f"https://www.reddit.com/r/{sub}/top.json?t=day&limit={limit*3}"
+        # 缩短超时时间为 5 秒
+        response = requests.get(url, headers=headers, timeout=5)
         
         if response.status_code == 200:
             data = response.json()
