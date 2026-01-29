@@ -68,8 +68,7 @@ def fetch_reddit_subreddit(sub, limit=10):
                 # Reddit RSS summary 通常包含 HTML 表格，里边有 score/comments
                 summary = getattr(entry, 'summary', '')
                 
-                # 尝试解析评论数
-                comments_count = 0
+                comments_count = None
                 comments_match = re.search(r'>(\d+)\s+comments<', summary)
                 if not comments_match:
                      comments_match = re.search(r'(\d+)\s+comments', summary)
@@ -77,9 +76,7 @@ def fetch_reddit_subreddit(sub, limit=10):
                 if comments_match:
                     comments_count = int(comments_match.group(1))
                 
-                # 尝试解析分数 (Reddit RSS 有时会在 summary 中包含 "submitted by ... points")
-                # 但通常 top RSS 可能不包含分数。如果找不到，暂设为 0 或隐藏
-                score_count = 0
+                score_count = None
                 score_match = re.search(r'(\d+)\s+points', summary)
                 if score_match:
                     score_count = int(score_match.group(1))
@@ -95,7 +92,7 @@ def fetch_reddit_subreddit(sub, limit=10):
                 posts_list.append({
                     'source': f"r/{sub}",
                     'title': entry.title,
-                    'score': score_count if score_count > 0 else 'N/A', 
+                    'score': score_count, 
                     'comments': comments_count,
                     'url': entry.link,
                     'permalink': entry.link,
@@ -164,9 +161,13 @@ def get_reddit_hot(target_date=None):
         df = pd.DataFrame(mock_data)
         return df
 
-    # 按分数排序
     df = pd.DataFrame(all_posts)
-    df = df.sort_values(by='score', ascending=False)
+    if 'score' in df.columns:
+        df['score_numeric'] = pd.to_numeric(df['score'], errors='coerce')
+        df = df.sort_values(by='score_numeric', ascending=False, na_position='last')
+        df = df.drop(columns=['score_numeric'])
+    elif 'created_utc' in df.columns:
+        df = df.sort_values(by='created_utc', ascending=False)
     
     # 保存到数据库 (只保存今天的)
     save_reddit_to_db(all_posts, today_str)

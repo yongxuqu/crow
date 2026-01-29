@@ -88,9 +88,17 @@ else:
     with tab2:
         st.header("Reddit 独立开发热门讨论")
         if not reddit_data.empty:
-            # 简单的数据展示
+            display_df = reddit_data.copy()
+            display_df['score'] = display_df['score'].apply(lambda x: "" if pd.isna(x) or x == "N/A" else x)
+            display_df['comments'] = display_df['comments'].apply(lambda x: "" if pd.isna(x) or x == "N/A" else x)
+            score_numeric = pd.to_numeric(display_df['score'], errors='coerce')
+            comments_numeric = pd.to_numeric(display_df['comments'], errors='coerce')
+            if not score_numeric.gt(0).any():
+                display_df['score'] = ""
+            if not comments_numeric.gt(0).any():
+                display_df['comments'] = ""
             st.dataframe(
-                reddit_data[['title', 'score', 'comments', 'source', 'created_utc', 'url']],
+                display_df[['title', 'score', 'comments', 'source', 'created_utc', 'url']],
                 column_config={
                     "url": st.column_config.LinkColumn("链接"),
                     "title": "标题",
