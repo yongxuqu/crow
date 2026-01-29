@@ -8,7 +8,10 @@ import pytz
 import re
 import os
 import streamlit as st
-import praw
+try:
+    import praw
+except ImportError:
+    praw = None
 from db_utils import get_news_from_db, save_news_to_db, get_reddit_from_db, save_reddit_to_db, get_github_trending_from_db, save_github_trending_to_db, get_xhs_from_db, save_xhs_to_db
 from bs4 import BeautifulSoup
 import urllib.parse
@@ -18,6 +21,10 @@ def fetch_reddit_with_praw(subreddits_list, limit=10):
     使用 PRAW (Reddit 官方 API) 获取数据，这是最可靠的方式。
     需要配置 REDDIT_CLIENT_ID 和 REDDIT_CLIENT_SECRET
     """
+    if not praw:
+        print("PRAW not installed.")
+        return []
+
     print("Using PRAW for Reddit fetching...")
     posts_list = []
     try:

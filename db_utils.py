@@ -1,6 +1,10 @@
 import os
 import streamlit as st
-from supabase import create_client, Client
+try:
+    from supabase import create_client, Client
+except ImportError:
+    create_client = None
+    Client = None
 from dotenv import load_dotenv
 import pandas as pd
 from datetime import datetime
@@ -21,6 +25,8 @@ try:
 except FileNotFoundError:
     # 本地运行时可能没有 secrets.toml，忽略错误
     pass
+except Exception:
+    pass
 
 # 如果 Secrets 里没有，再尝试从环境变量读取
 if not url:
@@ -28,15 +34,18 @@ if not url:
 if not key:
     key = os.environ.get("SUPABASE_KEY")
 
-supabase: Client = None
+supabase = None
 
-if url and key:
+if create_client and url and key:
     try:
         supabase = create_client(url, key)
     except Exception as e:
         print(f"Failed to initialize Supabase client: {e}")
 else:
-    print("Warning: SUPABASE_URL or SUPABASE_KEY not found in environment variables or secrets.")
+    if not create_client:
+        print("Warning: 'supabase' library not found.")
+    else:
+        print("Warning: SUPABASE_URL or SUPABASE_KEY not found in environment variables or secrets.")
 
 def get_news_from_db(date_str):
     """
