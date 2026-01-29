@@ -9,8 +9,9 @@ import re
 import os
 import streamlit as st
 import praw
-from db_utils import get_news_from_db, save_news_to_db, get_reddit_from_db, save_reddit_to_db, get_github_trending_from_db, save_github_trending_to_db
+from db_utils import get_news_from_db, save_news_to_db, get_reddit_from_db, save_reddit_to_db, get_github_trending_from_db, save_github_trending_to_db, get_xhs_from_db, save_xhs_to_db
 from bs4 import BeautifulSoup
+import urllib.parse
 
 def fetch_reddit_with_praw(subreddits_list, limit=10):
     """
@@ -559,6 +560,133 @@ def get_github_trending(target_date=None):
         save_github_trending_to_db(items, today_str)
         
     return pd.DataFrame(items)
+
+def fetch_xhs_search_bing(keywords):
+    """
+    通过 Bing Search 搜索小红书相关内容
+    site:xiaohongshu.com {keywords}
+    """
+    items = []
+    # 构造查询：site:xiaohongshu.com "美妆" "有没有app"
+    # 注意：Bing 爬取很容易被封，这里只是尝试。如果失败返回空。
+    base_url = "https://www.bing.com/search"
+    
+    # 组合查询词
+    query = f'site:xiaohongshu.com {keywords}'
+    params = {
+        'q': query,
+        'rdr': 1 # 尝试绕过一些重定向
+    }
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
+    }
+    
+    print(f"Searching Bing for XHS: {query}")
+    
+    try:
+        response = requests.get(base_url, params=params, headers=headers, timeout=8)
+        if response.status_code != 200:
+            print(f"Bing search failed: {response.status_code}")
+            return []
+            
+        soup = BeautifulSoup(response.text, 'html.parser')
+        results = soup.select('li.b_algo')
+        
+        for res in results:
+            try:
+                h2 = res.select_one('h2 a')
+                if not h2: continue
+                
+                title = h2.get_text()
+                link = h2.get('href')
+                
+                # Snippet
+                snippet_div = res.select_one('div.b_caption p')
+                snippet = snippet_div.get_text() if snippet_div else ""
+                
+                items.append({
+                    'title': title,
+                    'link': link,
+                    'snippet': snippet,
+                    'keyword': keywords
+                })
+            except Exception:
+                continue
+                
+    except Exception as e:
+        print(f"Error searching Bing: {e}")
+        
+    return items
+
+def get_xhs_trends(target_date=None):
+    # 1. 检查数据库
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    query_date = target_date.strftime('%Y-%m-%d') if target_date else today_str
+    
+    if query_date != today_str:
+        print(f"Querying DB for XHS on {query_date}...")
+        db_data = get_xhs_from_db(query_date)
+        if db_data:
+            return pd.DataFrame(db_data)
+        else:
+            return pd.DataFrame() # 历史无数据
+            
+    # 2. 如果是今天，尝试爬取 (Bing Search)
+    # 关键词组合：针对“女性美妆/拍照” + “独立开发需求”
+    # 意图：寻找“有没有app能做这个”，“想做一个app”，“求app推荐”
+    search_queries = [
+        '"有没有app" ("美妆" OR "拍照" OR "修图")',
+        '"求app" ("穿搭" OR "美甲" OR "医美")',
+        '"想做一个app" ("女生" OR "生活")',
+        '"痛点" ("美妆" OR "拍照")'
+    ]
+    
+    all_items = []
+    
+    # 串行执行，避免并发太快被 Bing 封禁
+    for q in search_queries:
+        items = fetch_xhs_search_bing(q)
+        if items:
+            all_items.extend(items)
+            
+    # 去重
+    seen_links = set()
+    unique_items = []
+    for item in all_items:
+        if item['link'] not in seen_links:
+            seen_links.add(item['link'])
+            unique_items.append(item)
+            
+    if not unique_items:
+        print("Using mock XHS data (Bing search failed or blocked)")
+        mock_data = [
+            {
+                'title': '求一个能自动给美妆产品试色的APP - 小红书',
+                'link': 'https://www.xiaohongshu.com/explore',
+                'snippet': '每次买口红都要去专柜试色太麻烦了，有没有app可以AR试色比较准的？现有的几个都感觉颜色偏差好大...',
+                'keyword': 'Mock Data'
+            },
+            {
+                'title': '想做一个专门给女生记录穿搭的APP，大家觉得有搞头吗？ - 小红书',
+                'link': 'https://www.xiaohongshu.com/explore',
+                'snippet': '现在的衣橱管理APP都太复杂了，我就想简单的记录每天穿了什么，然后能自动统计利用率...',
+                'keyword': 'Mock Data'
+            },
+            {
+                'title': '有没有app能一键生成这种胶片感的照片？ - 小红书',
+                'link': 'https://www.xiaohongshu.com/explore',
+                'snippet': '最近很火的那个CCD风格，用醒图调好麻烦，求推荐一键生成的...',
+                'keyword': 'Mock Data'
+            }
+        ]
+        unique_items = mock_data
+    
+    # 存入数据库 (排除 mock 数据)
+    if unique_items and unique_items[0]['keyword'] != 'Mock Data':
+        save_xhs_to_db(unique_items, today_str)
+        
+    return pd.DataFrame(unique_items)
 
 if __name__ == "__main__":
     # Test

@@ -161,3 +161,42 @@ def save_github_trending_to_db(items, date_str):
         print(f"Saved {len(data_to_insert)} github items to DB for {date_str}")
     except Exception as e:
         print(f"Error saving github data to DB: {e}")
+
+def get_xhs_from_db(date_str):
+    """
+    从 Supabase 获取指定日期的小红书热点
+    """
+    if not supabase:
+        return []
+    
+    try:
+        response = supabase.table('xiaohongshu_trends').select("*").eq('fetched_date', date_str).order('id', desc=True).execute()
+        return response.data
+    except Exception as e:
+        print(f"Error fetching xhs from DB: {e}")
+        return []
+
+def save_xhs_to_db(items, date_str):
+    """
+    保存小红书热点数据到 Supabase
+    """
+    if not supabase or not items:
+        return
+    
+    try:
+        # 准备数据
+        data_to_insert = []
+        for item in items:
+            data_to_insert.append({
+                'title': item['title'],
+                'link': item['link'],
+                'snippet': item['snippet'],
+                'keyword': item.get('keyword', ''),
+                'fetched_date': date_str
+            })
+            
+        # 批量插入
+        supabase.table('xiaohongshu_trends').insert(data_to_insert).execute()
+        print(f"Saved {len(data_to_insert)} xhs items to DB for {date_str}")
+    except Exception as e:
+        print(f"Error saving xhs data to DB: {e}")

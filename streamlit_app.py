@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from utils import get_reddit_hot, get_ai_news, get_github_trending
+from utils import get_reddit_hot, get_ai_news, get_github_trending, get_xhs_trends
 from datetime import datetime, date
 
 # 设置页面配置
@@ -40,11 +40,13 @@ with st.sidebar:
         1. 每日 AI 最新动态 (RSS)
         2. Reddit 独立开发热门需求
         3. GitHub 当日热榜
+        4. 小红书热点 (美妆/拍照需求)
         
         数据源：
         - OpenAI Blog, TechCrunch AI, etc.
         - r/indiehackers, r/SaaS, etc.
         - GitHub Trending
+        - Bing Search (site:xiaohongshu.com)
         """
     )
     
@@ -62,18 +64,19 @@ def load_data(target_date):
     ai_news = get_ai_news(target_date)
     reddit_hot = get_reddit_hot(target_date)
     github_trending = get_github_trending(target_date)
-    return ai_news, reddit_hot, github_trending
+    xhs_trends = get_xhs_trends(target_date)
+    return ai_news, reddit_hot, github_trending, xhs_trends
 
 # 加载数据
 with st.spinner('正在获取最新数据...'):
-    ai_data, reddit_data, github_data = load_data(selected_date)
+    ai_data, reddit_data, github_data, xhs_data = load_data(selected_date)
 
 # 检查是否有数据
-if ai_data.empty and reddit_data.empty and github_data.empty:
+if ai_data.empty and reddit_data.empty and github_data.empty and xhs_data.empty:
     st.warning(f"没有找到 {selected_date} 的归档数据。如果是今天，可能是网络问题；如果是历史日期，说明当时没有抓取。")
 else:
     # 页面布局
-    tab1, tab2, tab3 = st.tabs(["🤖 每日 AI 动态", "🔥 独立开发热门", "📈 GitHub 热榜"])
+    tab1, tab2, tab3, tab4 = st.tabs(["🤖 每日 AI 动态", "🔥 独立开发热门", "📈 GitHub 热榜", "📕 小红书热点"])
 
     with tab1:
         st.header("每日 AI 最新动态")
@@ -128,3 +131,20 @@ else:
             )
         else:
             st.info("暂无 GitHub 数据")
+
+    with tab4:
+        st.header("小红书热点 (美妆/拍照/女生需求)")
+        st.caption("数据来源: Bing Search (site:xiaohongshu.com)，筛选关键词：有没有app/求app/想做一个app")
+        if not xhs_data.empty:
+            st.dataframe(
+                xhs_data[['title', 'snippet', 'link']],
+                column_config={
+                    "link": st.column_config.LinkColumn("链接"),
+                    "title": "标题",
+                    "snippet": "内容摘要"
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+        else:
+            st.info("暂无小红书数据")
