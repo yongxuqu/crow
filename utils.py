@@ -11,33 +11,35 @@ from bs4 import BeautifulSoup
 def fetch_reddit_subreddit(sub, limit=10):
     """
     单个 Subreddit 获取函数，用于并发执行
+    优先尝试 JSON API，如果失败则回退到 RSS
     """
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
     }
     posts_list = []
     print(f"Fetching r/{sub}...")
+    
+    # --- 尝试 1: JSON API ---
     try:
         # 使用 top.json?t=day 获取过去 24 小时内热度最高的内容
-        # limit 稍微调大一点，以防过滤后数量太少
         url = f"https://www.reddit.com/r/{sub}/top.json?t=day&limit={limit*3}"
-        # 缩短超时时间为 5 秒
         response = requests.get(url, headers=headers, timeout=5)
         
         if response.status_code == 200:
             data = response.json()
-            posts = data['data']['children']
+            posts = data.get('data', {}).get('children', [])
             
-            # 获取当前时间戳和 24 小时前的时间戳
+            # 获取当前时间戳
             now_ts = datetime.now().timestamp()
-            one_day_ago_ts = now_ts - 24 * 3600
+            # 放宽时间过滤到 48 小时，避免时区差异导致数据为空
+            # Reddit 的 t=day 其实已经做了一次过滤，这里的二次过滤是为了保险，但不能太严
+            cutoff_ts = now_ts - 48 * 3600 
             
             for post in posts:
                 p_data = post['data']
-                created_utc = p_data.get('created_utc')
+                created_utc = p_data.get('created_utc', 0)
                 
-                # 双重保险：过滤掉非 24 小时内的帖子
-                if created_utc < one_day_ago_ts:
+                if created_utc < cutoff_ts:
                     continue
                     
                 posts_list.append({
@@ -49,14 +51,44 @@ def fetch_reddit_subreddit(sub, limit=10):
                     'permalink': f"https://www.reddit.com{p_data.get('permalink')}",
                     'created_utc': datetime.fromtimestamp(created_utc).strftime('%Y-%m-%d %H:%M')
                 })
-            
-            # 截取需要的数量
-            posts_list = posts_list[:limit]
         else:
-            print(f"Failed to fetch r/{sub}: {response.status_code}")
+            print(f"JSON API failed for r/{sub}: {response.status_code}")
     except Exception as e:
-        print(f"Error fetching r/{sub}: {e}")
-    return posts_list
+        print(f"Error fetching JSON for r/{sub}: {e}")
+
+    # --- 尝试 2: RSS Fallback (如果 JSON 没拿到数据) ---
+    if not posts_list:
+        print(f"Falling back to RSS for r/{sub}...")
+        try:
+            rss_url = f"https://www.reddit.com/r/{sub}/top/.rss?t=day"
+            feed = feedparser.parse(rss_url)
+            
+            for entry in feed.entries[:limit]:
+                # RSS 不容易直接拿到 score/comments，尝试从 summary 解析或设为默认
+                # Reddit RSS summary 通常包含 HTML 表格，里边有 score/comments
+                # 这里简单处理，不做复杂的 HTML 解析
+                
+                # 解析时间
+                published_dt = datetime.now()
+                if hasattr(entry, 'updated_parsed'):
+                    try:
+                         published_dt = datetime.fromtimestamp(datetime(*entry.updated_parsed[:6]).timestamp())
+                    except:
+                        pass
+                
+                posts_list.append({
+                    'source': f"r/{sub}",
+                    'title': entry.title,
+                    'score': 'N/A', # RSS 难以直接获取分数
+                    'comments': 'Link',
+                    'url': entry.link,
+                    'permalink': entry.link,
+                    'created_utc': published_dt.strftime('%Y-%m-%d %H:%M')
+                })
+        except Exception as e:
+            print(f"Error fetching RSS for r/{sub}: {e}")
+
+    return posts_list[:limit]
 
 def get_reddit_hot(target_date=None):
     # 如果指定了日期且不是今天，尝试从数据库获取
