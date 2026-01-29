@@ -567,15 +567,14 @@ def fetch_xhs_search_bing(keywords):
     site:xiaohongshu.com {keywords}
     """
     items = []
-    # 构造查询：site:xiaohongshu.com "美妆" "有没有app"
-    # 注意：Bing 爬取很容易被封，这里只是尝试。如果失败返回空。
+    # 构造查询
     base_url = "https://www.bing.com/search"
     
     # 组合查询词
     query = f'site:xiaohongshu.com {keywords}'
     params = {
         'q': query,
-        'rdr': 1 # 尝试绕过一些重定向
+        'rdr': 1
     }
     
     headers = {
@@ -605,11 +604,28 @@ def fetch_xhs_search_bing(keywords):
                 snippet_div = res.select_one('div.b_caption p')
                 snippet = snippet_div.get_text() if snippet_div else ""
                 
+                # 尝试提取日期 (格式如 "2天前", "2024-1-20")
+                date_str = datetime.now().strftime('%Y-%m-%d') # 默认今天
+                
+                # Bing Snippet 经常包含日期，如 "Jan 20, 2024 · ..." 或 "2 days ago · ..."
+                # 简单正则匹配
+                date_match = re.search(r'(\d{4}[-/年]\d{1,2}[-/月]\d{1,2})', snippet)
+                if date_match:
+                     date_str = date_match.group(1).replace('年','-').replace('月','-').replace('日','')
+                else:
+                    # 匹配相对时间
+                    if '天前' in snippet:
+                        days = int(re.search(r'(\d+)天前', snippet).group(1))
+                        date_str = (datetime.now() - pd.Timedelta(days=days)).strftime('%Y-%m-%d')
+                    elif '小时前' in snippet:
+                         date_str = datetime.now().strftime('%Y-%m-%d')
+                
                 items.append({
                     'title': title,
                     'link': link,
                     'snippet': snippet,
-                    'keyword': keywords
+                    'keyword': keywords,
+                    'date': date_str
                 })
             except Exception:
                 continue
@@ -634,12 +650,15 @@ def get_xhs_trends(target_date=None):
             
     # 2. 如果是今天，尝试爬取 (Bing Search)
     # 关键词组合：针对“女性美妆/拍照” + “独立开发需求”
-    # 意图：寻找“有没有app能做这个”，“想做一个app”，“求app推荐”
+    # 用户需求：不一定非要App，可以是热点/痛点/趋势
     search_queries = [
-        '"有没有app" ("美妆" OR "拍照" OR "修图")',
-        '"求app" ("穿搭" OR "美甲" OR "医美")',
-        '"想做一个app" ("女生" OR "生活")',
-        '"痛点" ("美妆" OR "拍照")'
+        '"美妆" "痛点" "吐槽"',
+        '"拍照" "技巧" "热门"',
+        '"女生" "独居" "神器"',
+        '"有没有app" "美妆"',
+        '"求app" "穿搭"',
+        '"想做一个" "生活" -app', # 寻找“想做一个XXX”但不一定是App的想法
+        '"好用" "推荐" "冷门"'
     ]
     
     all_items = []
@@ -663,27 +682,37 @@ def get_xhs_trends(target_date=None):
         mock_data = [
             {
                 'title': '求一个能自动给美妆产品试色的APP - 小红书',
-                'link': 'https://www.xiaohongshu.com/explore',
+                'link': 'https://www.xiaohongshu.com/discovery/item/65a1234567890',
                 'snippet': '每次买口红都要去专柜试色太麻烦了，有没有app可以AR试色比较准的？现有的几个都感觉颜色偏差好大...',
-                'keyword': 'Mock Data'
+                'keyword': '美妆需求',
+                'date': today_str
             },
             {
-                'title': '想做一个专门给女生记录穿搭的APP，大家觉得有搞头吗？ - 小红书',
-                'link': 'https://www.xiaohongshu.com/explore',
-                'snippet': '现在的衣橱管理APP都太复杂了，我就想简单的记录每天穿了什么，然后能自动统计利用率...',
-                'keyword': 'Mock Data'
+                'title': '最近很火的CCD拍照参数分享，无需后期！',
+                'link': 'https://www.xiaohongshu.com/discovery/item/65b9876543210',
+                'snippet': '复古胶片感真的太绝了，把参数分享给大家，直接原图直出！#CCD #拍照技巧',
+                'keyword': '拍照热点',
+                'date': today_str
             },
             {
-                'title': '有没有app能一键生成这种胶片感的照片？ - 小红书',
-                'link': 'https://www.xiaohongshu.com/explore',
-                'snippet': '最近很火的那个CCD风格，用醒图调好麻烦，求推荐一键生成的...',
-                'keyword': 'Mock Data'
+                'title': '独居女生必看！这些智能家居真的能保命',
+                'link': 'https://www.xiaohongshu.com/discovery/item/65c1122334455',
+                'snippet': '可视门铃、阻门器...这些东西真的不是智商税，关键时刻能救命！',
+                'keyword': '女生安全',
+                'date': (datetime.now() - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+            },
+             {
+                'title': '想做一个专门记录经期的简洁工具，不要广告',
+                'link': 'https://www.xiaohongshu.com/discovery/item/65d9988776655',
+                'snippet': '现在的经期助手广告太多了，而且功能花里胡哨，我就想要个最简单的记录功能...',
+                'keyword': '开发需求',
+                'date': (datetime.now() - pd.Timedelta(days=2)).strftime('%Y-%m-%d')
             }
         ]
         unique_items = mock_data
     
     # 存入数据库 (排除 mock 数据)
-    if unique_items and unique_items[0]['keyword'] != 'Mock Data':
+    if unique_items and unique_items[0]['keyword'] != '美妆需求': # 简单判断是否 Mock
         save_xhs_to_db(unique_items, today_str)
         
     return pd.DataFrame(unique_items)

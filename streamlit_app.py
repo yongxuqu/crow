@@ -134,14 +134,19 @@ else:
 
     with tab4:
         st.header("小红书热点 (美妆/拍照/女生需求)")
-        st.caption("数据来源: Bing Search (site:xiaohongshu.com)，筛选关键词：有没有app/求app/想做一个app")
+        st.caption("数据来源: Bing Search (site:xiaohongshu.com)，聚合关键词：美妆/拍照/独居/痛点/需求 (不仅仅是App)")
         if not xhs_data.empty:
+            # 确保 date 列存在
+            if 'date' not in xhs_data.columns:
+                 xhs_data['date'] = selected_date.strftime('%Y-%m-%d')
+            
             st.dataframe(
-                xhs_data[['title', 'snippet', 'link']],
+                xhs_data[['title', 'snippet', 'date', 'link']],
                 column_config={
                     "link": st.column_config.LinkColumn("链接"),
                     "title": "标题",
-                    "snippet": "内容摘要"
+                    "snippet": "内容摘要",
+                    "date": "日期"
                 },
                 hide_index=True,
                 use_container_width=True
