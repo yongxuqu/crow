@@ -8,6 +8,21 @@ import pytz
 import re
 from db_utils import get_news_from_db, save_news_to_db, get_reddit_from_db, save_reddit_to_db
 from bs4 import BeautifulSoup
+def fetch_reddit_post_metrics(link, headers):
+    post_id_match = re.search(r'/comments/([a-z0-9]+)/', link)
+    if not post_id_match:
+        return None, None
+    post_id = post_id_match.group(1)
+    json_url = f"https://www.reddit.com/comments/{post_id}.json?raw_json=1"
+    try:
+        response = requests.get(json_url, headers=headers, timeout=5)
+        if response.status_code != 200:
+            return None, None
+        data = response.json()
+        post_data = data[0]['data']['children'][0]['data']
+        return post_data.get('score'), post_data.get('num_comments')
+    except Exception:
+        return None, None
 def fetch_reddit_subreddit(sub, limit=10):
     """
     单个 Subreddit 获取函数，用于并发执行
@@ -89,6 +104,13 @@ def fetch_reddit_subreddit(sub, limit=10):
                     except:
                         pass
                 
+                if (score_count is None) or (comments_count == 0):
+                    fetched_score, fetched_comments = fetch_reddit_post_metrics(entry.link, headers)
+                    if score_count is None and fetched_score is not None:
+                        score_count = fetched_score
+                    if comments_count == 0 and fetched_comments is not None:
+                        comments_count = fetched_comments
+
                 posts_list.append({
                     'source': f"r/{sub}",
                     'title': entry.title,
