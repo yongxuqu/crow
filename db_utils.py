@@ -120,3 +120,44 @@ def save_reddit_to_db(reddit_items, date_str):
         print(f"Saved {len(data_to_insert)} reddit items to DB for {date_str}")
     except Exception as e:
         print(f"Error saving reddit data to DB: {e}")
+
+def get_github_trending_from_db(date_str):
+    """
+    从 Supabase 获取指定日期的 GitHub 热榜
+    """
+    if not supabase:
+        return []
+    
+    try:
+        response = supabase.table('github_trending').select("*").eq('fetched_date', date_str).order('stars_today', desc=True).execute()
+        return response.data
+    except Exception as e:
+        print(f"Error fetching github trending from DB: {e}")
+        return []
+
+def save_github_trending_to_db(items, date_str):
+    """
+    保存 GitHub 热榜数据到 Supabase
+    """
+    if not supabase or not items:
+        return
+    
+    try:
+        # 准备数据
+        data_to_insert = []
+        for item in items:
+            data_to_insert.append({
+                'repo_name': item['repo_name'],
+                'description': item['description'],
+                'language': item['language'],
+                'stars_today': item['stars_today'],
+                'total_stars': item['total_stars'],
+                'url': item['url'],
+                'fetched_date': date_str
+            })
+            
+        # 批量插入
+        supabase.table('github_trending').insert(data_to_insert).execute()
+        print(f"Saved {len(data_to_insert)} github items to DB for {date_str}")
+    except Exception as e:
+        print(f"Error saving github data to DB: {e}")

@@ -9,7 +9,7 @@ import re
 import os
 import streamlit as st
 import praw
-from db_utils import get_news_from_db, save_news_to_db, get_reddit_from_db, save_reddit_to_db
+from db_utils import get_news_from_db, save_news_to_db, get_reddit_from_db, save_reddit_to_db, get_github_trending_from_db, save_github_trending_to_db
 from bs4 import BeautifulSoup
 
 def fetch_reddit_with_praw(subreddits_list, limit=10):
@@ -436,6 +436,129 @@ def get_ai_news(target_date=None):
     save_news_to_db(all_news, today_str)
     
     return df
+
+def fetch_github_trending_raw():
+    """
+    抓取 GitHub Trending 页面
+    """
+    url = "https://github.com/trending"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
+    print("Fetching GitHub Trending...")
+    items = []
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            print(f"Failed to fetch GitHub Trending: {response.status_code}")
+            return []
+            
+        soup = BeautifulSoup(response.content, 'html.parser')
+        rows = soup.select('.Box-row')
+        
+        for row in rows:
+            try:
+                # Repo Name and Link
+                h2_a = row.select_one('h2 a')
+                if not h2_a: continue
+                
+                repo_name = h2_a.text.strip().replace('\n', '').replace(' ', '')
+                repo_url = f"https://github.com{h2_a['href']}"
+                
+                # Description
+                p_desc = row.select_one('p')
+                description = p_desc.text.strip() if p_desc else ""
+                
+                # Language
+                lang_span = row.select_one('span[itemprop="programmingLanguage"]')
+                language = lang_span.text.strip() if lang_span else "Unknown"
+                
+                # Stars
+                # Usually there are two links with svg icons for stars and forks.
+                # Total stars is the first one.
+                # Today stars is just text in a span usually at the end.
+                
+                footer_links = row.select('div.f6 a')
+                total_stars = 0
+                if footer_links:
+                    total_stars_str = footer_links[0].text.strip().replace(',', '')
+                    try:
+                        total_stars = int(total_stars_str)
+                    except:
+                        pass
+                        
+                stars_today_span = row.select_one('span.d-inline-block.float-sm-right')
+                stars_today = 0
+                if stars_today_span:
+                    stars_today_text = stars_today_span.text.strip()
+                    # extract number from "123 stars today"
+                    match = re.search(r'(\d+)', stars_today_text.replace(',', ''))
+                    if match:
+                        stars_today = int(match.group(1))
+                
+                items.append({
+                    'repo_name': repo_name,
+                    'description': description,
+                    'language': language,
+                    'stars_today': stars_today,
+                    'total_stars': total_stars,
+                    'url': repo_url
+                })
+                
+            except Exception as e:
+                print(f"Error parsing a GitHub row: {e}")
+                continue
+                
+    except Exception as e:
+        print(f"Error fetching GitHub Trending: {e}")
+        
+    return items
+
+def get_github_trending(target_date=None):
+    # 如果指定了日期且不是今天，尝试从数据库获取
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    query_date = target_date.strftime('%Y-%m-%d') if target_date else today_str
+    
+    if query_date != today_str:
+        print(f"Querying DB for GitHub Trending on {query_date}...")
+        db_data = get_github_trending_from_db(query_date)
+        if db_data:
+            return pd.DataFrame(db_data)
+        else:
+            return pd.DataFrame()
+            
+    # 如果是今天，直接爬取
+    items = fetch_github_trending_raw()
+    
+    if not items:
+        # Mock data if failed
+        print("Using mock GitHub data")
+        items = [
+            {
+                'repo_name': 'mock/repo-1',
+                'description': '这是一个演示项目 (Fetch Failed)',
+                'language': 'Python',
+                'stars_today': 120,
+                'total_stars': 5000,
+                'url': 'https://github.com'
+            },
+            {
+                'repo_name': 'mock/repo-2',
+                'description': '另一个演示项目',
+                'language': 'TypeScript',
+                'stars_today': 85,
+                'total_stars': 2300,
+                'url': 'https://github.com'
+            }
+        ]
+        
+    # 存入数据库
+    if items and items[0]['repo_name'] != 'mock/repo-1':
+        save_github_trending_to_db(items, today_str)
+        
+    return pd.DataFrame(items)
 
 if __name__ == "__main__":
     # Test
