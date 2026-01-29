@@ -76,7 +76,7 @@ def get_reddit_hot(target_date=None):
     # 更好的逻辑：如果是今天，优先爬取，然后保存到 DB (upsert 或 覆盖))
     # 为简单起见，这里保持实时爬取，然后异步存入 DB
     
-    subreddits = ['indiehackers', 'SaaS', 'sideproject', 'entrepreneur', 'startups']
+    subreddits = ['indiehackers', 'SaaS', 'sideproject', 'entrepreneur', 'startups', 'AppIdeas', 'SomebodyMakeThis']
     all_posts = []
     
     # ... 原有爬取逻辑 ...
