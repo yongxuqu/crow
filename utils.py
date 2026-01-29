@@ -64,9 +64,25 @@ def fetch_reddit_subreddit(sub, limit=10):
             feed = feedparser.parse(rss_url)
             
             for entry in feed.entries[:limit]:
-                # RSS 不容易直接拿到 score/comments，尝试从 summary 解析或设为默认
+                # RSS 不容易直接拿到 score/comments，尝试从 summary 解析
                 # Reddit RSS summary 通常包含 HTML 表格，里边有 score/comments
-                # 这里简单处理，不做复杂的 HTML 解析
+                summary = getattr(entry, 'summary', '')
+                
+                # 尝试解析评论数
+                comments_count = 0
+                comments_match = re.search(r'>(\d+)\s+comments<', summary)
+                if not comments_match:
+                     comments_match = re.search(r'(\d+)\s+comments', summary)
+                
+                if comments_match:
+                    comments_count = int(comments_match.group(1))
+                
+                # 尝试解析分数 (Reddit RSS 有时会在 summary 中包含 "submitted by ... points")
+                # 但通常 top RSS 可能不包含分数。如果找不到，暂设为 0 或隐藏
+                score_count = 0
+                score_match = re.search(r'(\d+)\s+points', summary)
+                if score_match:
+                    score_count = int(score_match.group(1))
                 
                 # 解析时间
                 published_dt = datetime.now()
@@ -79,8 +95,8 @@ def fetch_reddit_subreddit(sub, limit=10):
                 posts_list.append({
                     'source': f"r/{sub}",
                     'title': entry.title,
-                    'score': 'N/A', # RSS 难以直接获取分数
-                    'comments': 'Link',
+                    'score': score_count if score_count > 0 else 'N/A', 
+                    'comments': comments_count,
                     'url': entry.link,
                     'permalink': entry.link,
                     'created_utc': published_dt.strftime('%Y-%m-%d %H:%M')
