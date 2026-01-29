@@ -114,51 +114,56 @@ def fetch_reddit_subreddit(sub, limit=10):
     if not posts_list:
         print(f"Falling back to RSS for r/{sub}...")
         try:
-            rss_url = f"https://www.reddit.com/r/{sub}/top/.rss?t=day"
-            feed = feedparser.parse(rss_url)
+            rss_url = f"https://www.reddit.com/r/{sub}/top/.rss?t=day&limit={limit}"
+            # 使用 requests 获取内容，带上 User-Agent，避免 feedparser 默认 UA 被封
+            rss_response = requests.get(rss_url, headers=headers, timeout=5)
             
-            for entry in feed.entries[:limit]:
-                # RSS 不容易直接拿到 score/comments，尝试从 summary 解析
-                # Reddit RSS summary 通常包含 HTML 表格，里边有 score/comments
-                summary = getattr(entry, 'summary', '')
+            if rss_response.status_code == 200:
+                feed = feedparser.parse(rss_response.content)
                 
-                comments_count = None
-                comments_match = re.search(r'>(\d+)\s+comments<', summary)
-                if not comments_match:
-                     comments_match = re.search(r'(\d+)\s+comments', summary)
+                for entry in feed.entries[:limit]:
+                    # RSS 不容易直接拿到 score/comments，尝试从 summary 解析
+                    # Reddit RSS summary 通常包含 HTML 表格，里边有 score/comments
+                    summary = getattr(entry, 'summary', '')
+                    
+                    comments_count = 0
+                    comments_match = re.search(r'>(\d+)\s+comments<', summary)
+                    if not comments_match:
+                         comments_match = re.search(r'(\d+)\s+comments', summary)
+                    
+                    if comments_match:
+                        comments_count = int(comments_match.group(1))
+                    
+                    score_count = 0
+                    score_match = re.search(r'(\d+)\s+points', summary)
+                    if score_match:
+                        score_count = int(score_match.group(1))
+                    
+                    # 解析时间
+                    published_dt = datetime.now()
+                    if hasattr(entry, 'updated_parsed'):
+                        try:
+                             published_dt = datetime.fromtimestamp(datetime(*entry.updated_parsed[:6]).timestamp())
+                        except:
+                            pass
+                    
+                    # 尝试再次获取 metrics 如果 RSS 里没有 (可选，但这会增加请求量，容易被封，先注释掉)
+                    # if (score_count == 0) or (comments_count == 0):
+                    #    fetched_score, fetched_comments = fetch_reddit_post_metrics(entry.link, headers)
+                    #    ...
+    
+                    posts_list.append({
+                        'source': f"r/{sub}",
+                        'title': entry.title,
+                        'score': score_count, 
+                        'comments': comments_count,
+                        'url': entry.link,
+                        'permalink': entry.link,
+                        'created_utc': published_dt.strftime('%Y-%m-%d %H:%M')
+                    })
+            else:
+                print(f"RSS fetch failed for r/{sub}: {rss_response.status_code}")
                 
-                if comments_match:
-                    comments_count = int(comments_match.group(1))
-                
-                score_count = None
-                score_match = re.search(r'(\d+)\s+points', summary)
-                if score_match:
-                    score_count = int(score_match.group(1))
-                
-                # 解析时间
-                published_dt = datetime.now()
-                if hasattr(entry, 'updated_parsed'):
-                    try:
-                         published_dt = datetime.fromtimestamp(datetime(*entry.updated_parsed[:6]).timestamp())
-                    except:
-                        pass
-                
-                if (score_count is None) or (comments_count == 0):
-                    fetched_score, fetched_comments = fetch_reddit_post_metrics(entry.link, headers)
-                    if score_count is None and fetched_score is not None:
-                        score_count = fetched_score
-                    if comments_count == 0 and fetched_comments is not None:
-                        comments_count = fetched_comments
-
-                posts_list.append({
-                    'source': f"r/{sub}",
-                    'title': entry.title,
-                    'score': score_count, 
-                    'comments': comments_count,
-                    'url': entry.link,
-                    'permalink': entry.link,
-                    'created_utc': published_dt.strftime('%Y-%m-%d %H:%M')
-                })
         except Exception as e:
             print(f"Error fetching RSS for r/{sub}: {e}")
 
@@ -277,7 +282,8 @@ def fetch_rss_feed(feed):
     
     print(f"Fetching {feed['name']}...")
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        # 更新 User-Agent 为较新的版本，避免被 Reddit 等站点拦截
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'}
         response = requests.get(feed['url'], headers=headers, timeout=5)
         if response.status_code != 200:
             print(f"Failed to fetch {feed['name']}: {response.status_code}")
