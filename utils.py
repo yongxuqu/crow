@@ -5,6 +5,7 @@ from datetime import datetime
 import concurrent.futures
 from dateutil import parser
 import pytz
+import re
 from db_utils import get_news_from_db, save_news_to_db, get_reddit_from_db, save_reddit_to_db
 from bs4 import BeautifulSoup
 def fetch_reddit_subreddit(sub, limit=10):
@@ -137,6 +138,13 @@ def fetch_rss_feed(feed):
         'cursor', 'trae', 'windsurf', 'bolt.new', 'lovable', 'vibe coding',
         'cline', 'roocline', 'aider', 'devin', 'supermaven'
     ]
+    
+    # 负面关键词：过滤掉报错、崩溃、求助等非资讯类内容
+    negative_keywords = [
+        'crash', 'error', 'bug', 'not working', 'fail', 'help', 'issue', 
+        'spinning wheel', 'frozen', 'stuck', 'glitch', 'broken'
+    ]
+    
     print(f"Fetching {feed['name']}...")
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
@@ -156,13 +164,38 @@ def fetch_rss_feed(feed):
             title = entry.title
             link = entry.link
             
-            # 针对 Hacker News 等综合源进行关键词过滤
-            # 移除 'model' 这种太宽泛的词，增加更多具体 AI 术语
+            # 0. 通用负面关键词过滤 (针对 Reddit/HN 等社区源)
+            # TechCrunch 等官方媒体通常不会有这类标题，为了保险起见全量过滤
+            title_lower = title.lower()
+            if any(nk in title_lower for nk in negative_keywords):
+                continue
+
+            # 0.5 过滤标题中显式标注旧年份的内容 (例如 "The 500-mile email (2002)")
+            # 如果标题包含 (YYYY) 且年份早于去年，则过滤
+            year_match = re.search(r'\((\d{4})\)', title)
+            if year_match:
+                year = int(year_match.group(1))
+                current_year = datetime.now().year
+                if year < current_year - 1:
+                    continue
+            
+            # 1. 针对 Hacker News 等综合源进行关键词过滤
             if feed['name'] == 'Hacker News':
-                # 检查标题是否包含任一关键词 (使用单词边界匹配会更严谨，但这里先用简单的字符串包含)
-                # 转为小写进行比较
-                title_lower = title.lower()
-                if not any(k in title_lower for k in keywords):
+                matched = False
+                for k in keywords:
+                    # 使用正则 \b 匹配单词边界，避免 'ai' 匹配到 'Maine' 或 'email'
+                    # 对于 'ai', 'gpt' 等短词，强制前后边界 \bkeyword\b
+                    # 对于 'transformer' 等可能复数的词，只强制前边界 \bkeyword
+                    if k in ['ai', 'gpt', 'llm', 'rag']:
+                         pattern = r'(?i)\b' + re.escape(k) + r'\b'
+                    else:
+                         pattern = r'(?i)\b' + re.escape(k)
+                         
+                    if re.search(pattern, title):
+                        matched = True
+                        break
+                
+                if not matched:
                     continue
             
             # 解析时间
@@ -193,9 +226,6 @@ def fetch_rss_feed(feed):
             
             # 针对 Hacker News 的特殊处理
             if feed['name'] == 'Hacker News':
-                # 关键词过滤
-                if not any(k in title.lower() for k in keywords):
-                    continue
                 # Hacker News 的摘要通常只是 "Comments"，没有什么信息量，直接置空或者给个提示
                 if 'Comments' in clean_summary or len(clean_summary) < 5:
                     clean_summary = "点击下方链接阅读 Hacker News 上的原文与讨论"
