@@ -6,8 +6,47 @@ import concurrent.futures
 from dateutil import parser
 import pytz
 import re
+import os
+import streamlit as st
+import praw
 from db_utils import get_news_from_db, save_news_to_db, get_reddit_from_db, save_reddit_to_db
 from bs4 import BeautifulSoup
+
+def fetch_reddit_with_praw(subreddits_list, limit=10):
+    """
+    使用 PRAW (Reddit 官方 API) 获取数据，这是最可靠的方式。
+    需要配置 REDDIT_CLIENT_ID 和 REDDIT_CLIENT_SECRET
+    """
+    print("Using PRAW for Reddit fetching...")
+    posts_list = []
+    try:
+        reddit = praw.Reddit(
+            client_id=st.secrets["REDDIT_CLIENT_ID"],
+            client_secret=st.secrets["REDDIT_CLIENT_SECRET"],
+            user_agent="streamlit:ai-indie-daily:v1.0 (by /u/anonymous)"
+        )
+        
+        # 将列表组合成 "indiehackers+SaaS+..." 字符串一次性获取
+        multi_sub = "+".join(subreddits_list)
+        
+        # 使用 read_only 模式获取 top
+        for submission in reddit.subreddit(multi_sub).top(time_filter="day", limit=limit*len(subreddits_list)):
+            posts_list.append({
+                'source': f"r/{submission.subreddit.display_name}",
+                'title': submission.title,
+                'score': submission.score,
+                'comments': submission.num_comments,
+                'url': submission.url,
+                'permalink': f"https://www.reddit.com{submission.permalink}",
+                'created_utc': datetime.fromtimestamp(submission.created_utc).strftime('%Y-%m-%d %H:%M')
+            })
+            
+    except Exception as e:
+        print(f"PRAW Error: {e}")
+        return []
+        
+    return posts_list
+
 def fetch_reddit_post_metrics(link, headers):
     post_id_match = re.search(r'/comments/([a-z0-9]+)/', link)
     if not post_id_match:
@@ -147,15 +186,35 @@ def get_reddit_hot(target_date=None):
     subreddits = ['indiehackers', 'SaaS', 'sideproject', 'entrepreneur', 'startups', 'AppIdeas', 'SomebodyMakeThis']
     all_posts = []
     
-    # ... 原有爬取逻辑 ...
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        future_to_sub = {executor.submit(fetch_reddit_subreddit, sub): sub for sub in subreddits}
-        for future in concurrent.futures.as_completed(future_to_sub):
-            try:
-                posts = future.result()
-                all_posts.extend(posts)
-            except Exception as exc:
-                print(f"Subreddit generated an exception: {exc}")
+    # --- 优先尝试 PRAW (官方 API) ---
+    # 检查 secrets 是否配置了 Reddit Key
+    has_reddit_secrets = False
+    try:
+        if "REDDIT_CLIENT_ID" in st.secrets and "REDDIT_CLIENT_SECRET" in st.secrets:
+            has_reddit_secrets = True
+    except FileNotFoundError:
+        pass # 本地如果没有 .streamlit/secrets.toml 会报错
+    except Exception:
+        pass
+
+    if has_reddit_secrets:
+        praw_posts = fetch_reddit_with_praw(subreddits)
+        if praw_posts:
+            all_posts = praw_posts
+    
+    # 如果 PRAW 没配置或失败，回退到原来的并发抓取 (RSS/JSON)
+    if not all_posts:
+        if has_reddit_secrets:
+            print("PRAW fetch returned empty, falling back to legacy fetcher...")
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            future_to_sub = {executor.submit(fetch_reddit_subreddit, sub): sub for sub in subreddits}
+            for future in concurrent.futures.as_completed(future_to_sub):
+                try:
+                    posts = future.result()
+                    all_posts.extend(posts)
+                except Exception as exc:
+                    print(f"Subreddit generated an exception: {exc}")
     
     if not all_posts:
         # 如果获取失败，返回 Mock 数据用于演示

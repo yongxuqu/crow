@@ -9,3 +9,4 @@ streamlit>=1.40.0
 supabase
 python-dotenv
 altair<6
+praw
