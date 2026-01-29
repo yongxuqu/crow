@@ -15,7 +15,6 @@ st.set_page_config(
 hide_streamlit_style = """
             <style>
             #MainMenu {visibility: hidden;}
-            header {visibility: hidden;}
             footer {visibility: hidden;}
             /* 隐藏 Deploy 按钮 */
             .stDeployButton {display:none;}
