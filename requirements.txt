@@ -5,7 +5,7 @@ python-dateutil
 pytz
 beautifulsoup4
 plotly
-streamlit
+streamlit>=1.40.0
 supabase
 python-dotenv
-altair
+altair<6
