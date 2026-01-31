@@ -581,6 +581,7 @@ def fetch_xhs_search_bing(keywords):
     query = f'site:xiaohongshu.com {keywords}'
     params = {
         'q': query,
+        'filters': 'ex1:"ez2"', # 限制时间为过去一周 (Past Week)
         'rdr': 1
     }
     
@@ -588,7 +589,7 @@ def fetch_xhs_search_bing(keywords):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
     }
     
-    print(f"Searching Bing for XHS: {query}")
+    print(f"Searching Bing for XHS: {query} with time filter")
     
     try:
         response = requests.get(base_url, params=params, headers=headers, timeout=8)
@@ -611,21 +612,33 @@ def fetch_xhs_search_bing(keywords):
                 snippet_div = res.select_one('div.b_caption p')
                 snippet = snippet_div.get_text() if snippet_div else ""
                 
-                # 尝试提取日期 (格式如 "2天前", "2024-1-20")
+                # 尝试提取日期 (格式如 "2天前", "2024-1-20", "Feb 15, 2024")
                 date_str = datetime.now().strftime('%Y-%m-%d') # 默认今天
                 
-                # Bing Snippet 经常包含日期，如 "Jan 20, 2024 · ..." 或 "2 days ago · ..."
-                # 简单正则匹配
-                date_match = re.search(r'(\d{4}[-/年]\d{1,2}[-/月]\d{1,2})', snippet)
-                if date_match:
-                     date_str = date_match.group(1).replace('年','-').replace('月','-').replace('日','')
-                else:
-                    # 匹配相对时间
-                    if '天前' in snippet:
-                        days = int(re.search(r'(\d+)天前', snippet).group(1))
-                        date_str = (datetime.now() - pd.Timedelta(days=days)).strftime('%Y-%m-%d')
-                    elif '小时前' in snippet:
-                         date_str = datetime.now().strftime('%Y-%m-%d')
+                # 1. 优先从 Snippet 开头提取日期 (Bing 特性)
+                # 格式通常是 "3 days ago · " 或 "Jan 20, 2024 · "
+                snippet_date_match = re.match(r'^([^·]+)·', snippet)
+                if snippet_date_match:
+                    date_text = snippet_date_match.group(1).strip()
+                    try:
+                        # 尝试解析相对时间
+                        if 'day' in date_text or '天' in date_text:
+                            days = int(re.search(r'(\d+)', date_text).group(1))
+                            date_str = (datetime.now() - pd.Timedelta(days=days)).strftime('%Y-%m-%d')
+                        elif 'hour' in date_text or '小时' in date_text or 'min' in date_text or '分' in date_text:
+                            date_str = datetime.now().strftime('%Y-%m-%d')
+                        else:
+                            # 尝试解析绝对时间
+                            parsed_date = parser.parse(date_text, fuzzy=True)
+                            date_str = parsed_date.strftime('%Y-%m-%d')
+                    except:
+                        pass
+                
+                # 2. 如果上面没提取到，尝试正则匹配 snippet 中的日期
+                if date_str == datetime.now().strftime('%Y-%m-%d') and not snippet_date_match:
+                     date_match = re.search(r'(\d{4}[-/年]\d{1,2}[-/月]\d{1,2})', snippet)
+                     if date_match:
+                          date_str = date_match.group(1).replace('年','-').replace('月','-').replace('日','')
                 
                 items.append({
                     'title': title,
