@@ -3,7 +3,13 @@ import pandas as pd
 import os
 from utils import get_reddit_hot, get_ai_news, get_github_trending, get_xhs_trends
 from db_utils import supabase
+from ai_helper import get_doubao_client
 from datetime import datetime, date
+
+# AI 配置 (从用户输入或 Secrets 获取)
+DOUBAO_API_KEY = "49907113-db5c-4557-9633-80f9537bd6ca"
+DOUBAO_MODEL_ID = "doubao-seed-1-6-251015"
+doubao_client = get_doubao_client(api_key=DOUBAO_API_KEY, model_id=DOUBAO_MODEL_ID)
 
 # 设置页面配置
 st.set_page_config(
@@ -85,7 +91,7 @@ if ai_data.empty and reddit_data.empty and github_data.empty and xhs_data.empty:
     st.warning(f"没有找到 {selected_date} 的归档数据。如果是今天，可能是网络问题；如果是历史日期，说明当时没有抓取。")
 else:
     # 页面布局
-    tab1, tab2, tab3, tab4 = st.tabs(["🤖 每日 AI 动态", "🔥 独立开发热门", "📈 GitHub 热榜", "📕 小红书热点"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🤖 每日 AI 动态", "🔥 独立开发热门", "📈 GitHub 热榜", "📕 小红书热点", "🧠 豆包 AI 助手"])
 
     with tab1:
         st.header("每日 AI 最新动态")
@@ -172,3 +178,75 @@ else:
                 3. 在 Streamlit Secrets 中添加 `SERPER_API_KEY = "你的Key"`。
                 4. 只有配置了 Serper Key，才能保证在云端稳定抓取搜索结果。
                 """)
+
+    with tab5:
+        st.header("🧠 豆包 AI 智能分析")
+        st.caption(f"Powered by Doubao (Model: {DOUBAO_MODEL_ID})")
+        
+        # Data Source Selection
+        data_options = {
+            "每日 AI 动态": ai_data,
+            "Reddit 独立开发热门": reddit_data,
+            "GitHub 热榜": github_data,
+            "小红书热点": xhs_data
+        }
+        
+        selected_option = st.selectbox("选择要分析的数据板块:", list(data_options.keys()))
+        selected_data = data_options[selected_option]
+        
+        if selected_data.empty:
+            st.warning(f"⚠️ {selected_option} 暂无数据，无法进行 AI 分析。")
+        else:
+            # Prepare data context
+            data_context = selected_data.head(30).to_string(index=False)
+            
+            if "ai_chat_history" not in st.session_state:
+                st.session_state["ai_chat_history"] = []
+                
+            # Summarize Button
+            if st.button("📝 生成核心趋势总结", type="primary", key="btn_summarize"):
+                with st.spinner("豆包正在阅读数据并生成总结..."):
+                    summary = doubao_client.generate_summary(data_context, context_type=selected_option)
+                    
+                    # Add to history
+                    st.session_state["ai_chat_history"].append({"role": "user", "content": f"请总结一下 {selected_option} 的数据。"})
+                    st.session_state["ai_chat_history"].append({"role": "assistant", "content": summary})
+            
+            # Display Chat History
+            for msg in st.session_state["ai_chat_history"]:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+            
+            # Chat Input
+            if prompt := st.chat_input("基于数据提问 (例如: '有哪些关于 LLM 的新项目?')"):
+                # Add user message
+                st.session_state["ai_chat_history"].append({"role": "user", "content": prompt})
+                with st.chat_message("user"):
+                    st.markdown(prompt)
+                
+                # Generate response
+                with st.chat_message("assistant"):
+                    # Context management
+                    system_prompt = f"""
+                    You are an intelligent data analyst assistant.
+                    Current Data Context ({selected_option}):
+                    {data_context}
+                    
+                    Answer the user's questions based on the above data.
+                    If the answer is not in the data, say so.
+                    Language: Chinese (Simplified).
+                    """
+                    
+                    messages = [{"role": "system", "content": system_prompt}]
+                    messages.extend([{"role": m["role"], "content": m["content"]} for m in st.session_state["ai_chat_history"][-10:]])
+                    
+                    full_response = ""
+                    try:
+                        stream = doubao_client.chat(messages)
+                        full_response = st.write_stream(stream)
+                    except Exception as e:
+                        st.error(f"AI Error: {e}")
+                        full_response = f"Error: {e}"
+                    
+                    st.session_state["ai_chat_history"].append({"role": "assistant", "content": full_response})
+

@@ -838,22 +838,24 @@ def fetch_xhs_explore_hot(limit=30):
             
         items = []
         seen = set()
-        # 暂不使用关键词过滤，因为热门内容通常是高质量的
-        # keyword_re = re.compile(r"美妆|化妆|护肤|拍照|写真|修图|穿搭|口红|底妆|眼妆|妆容|皮肤|洁面|面膜|粉底|腮红|美白|眼线|眉毛|睫毛|拍摄|滤镜|自拍|姿势|OOTD|探店|美食|好物|测评|种草|独居|女生")
+        # 恢复并增强关键词过滤，严格匹配用户需求（美妆/拍照/plog/女生需求）
+        keyword_re = re.compile(r"美妆|化妆|护肤|拍照|写真|修图|穿搭|口红|底妆|眼妆|妆容|皮肤|洁面|面膜|粉底|腮红|美白|眼线|眉毛|睫毛|拍摄|滤镜|自拍|姿势|OOTD|探店|好物|测评|种草|独居|女生|Plog|Vlog|生活碎片|美甲|发型|编发|卷发|染发|显瘦|减脂|瑜伽|普拉提")
         
         for note in notes:
             note_id = note.get("id") or note.get("noteId")
             if not note_id or note_id in seen:
                 continue
-            seen.add(note_id)
             
             title = note.get("displayTitle") or note.get("title") or ""
             # desc 有时候在 noteCard 里没有，可能需要进一步详情，但这里先取 title
             desc = note.get("desc") or note.get("description") or ""
             
-            # 如果没有标题，尝试用 user nickname 拼凑，或者直接跳过
-            if not title:
+            # 严格过滤：标题或描述中必须包含关键词
+            text_to_check = f"{title} {desc}"
+            if not keyword_re.search(text_to_check):
                 continue
+                
+            seen.add(note_id)
                 
             text = f"{title} {desc}".strip()
             
@@ -950,6 +952,7 @@ def get_xhs_trends(target_date=None):
         else:
             print("Found valid data in DB for TODAY.")
             return pd.DataFrame(db_data)
+    
     base_terms = [
         '美妆 痛点 吐槽',
         '拍照 技巧 热门',
@@ -958,18 +961,28 @@ def get_xhs_trends(target_date=None):
         '护肤 好用 冷门',
         '素人 变美 经验',
         '化妆 教程 新手',
-        '拍照 姿势 修图'
+        '拍照 姿势 修图',
+        'Plog 生活 记录',
+        'Vlog 拍摄 技巧',
+        'OOTD 每日 穿搭',
+        '美甲 款式 推荐',
+        '发型 教程 显脸小'
     ]
     search_queries = []
     for term in base_terms:
         search_queries.append(f'site:xiaohongshu.com/explore {term} -site:xiaohongshu.com/user/')
-        search_queries.append(f'site:xiaohongshu.com/discovery/item {term} -site:xiaohongshu.com/user/')
+        # search_queries.append(f'site:xiaohongshu.com/discovery/item {term} -site:xiaohongshu.com/user/') # 减少请求量，discovery/item 通常跟 explore 重复
         search_queries.append(term)
     
     all_items = []
     
     # 串行执行
-    for q in search_queries:
+    # 为了避免请求过多，随机选几个 query 跑一下，或者全跑
+    # 这里我们只跑前 5 个 query 组合，避免 API 消耗过大
+    import random
+    selected_queries = search_queries[:6] # 取前6个，覆盖不同领域
+    
+    for q in selected_queries:
         # 1. 优先尝试 Serper (Google API)，最稳定
         items = fetch_xhs_search_serper(q)
         
@@ -992,18 +1005,41 @@ def get_xhs_trends(target_date=None):
         print("Search failed or returned no results, fetching explore feed...")
     
     # 无论搜索结果如何，都尝试获取首页热门数据进行补充
-    explore_items = fetch_xhs_explore_hot(limit=20)
+    # 注意：fetch_xhs_explore_hot 内部已经有了严格的关键词过滤
+    explore_items = fetch_xhs_explore_hot(limit=30) # 增加 limit，因为过滤后可能会变少
     if explore_items:
-        print(f"Fetched {len(explore_items)} items from Explore")
-        all_items.extend(explore_items)
+        print(f"Fetched {len(explore_items)} items from Explore (Filtered)")
+        unique_items.extend(explore_items)
             
-    # 再次去重 (因为 search 和 explore 可能会有重复，虽然概率很低)
+    # 再次去重并应用统一过滤 (针对 Search 结果可能没过滤干净的情况)
+    # 复用之前的正则
+    keyword_re = re.compile(r"美妆|化妆|护肤|拍照|写真|修图|穿搭|口红|底妆|眼妆|妆容|皮肤|洁面|面膜|粉底|腮红|美白|眼线|眉毛|睫毛|拍摄|滤镜|自拍|姿势|OOTD|探店|好物|测评|种草|独居|女生|Plog|Vlog|生活碎片|美甲|发型|编发|卷发|染发|显瘦|减脂|瑜伽|普拉提")
+    
     seen_links = set()
     final_items = []
-    for item in all_items:
-        if item['link'] not in seen_links:
-            seen_links.add(item['link'])
-            final_items.append(item)
+    
+    print(f"Total items before final filtering: {len(unique_items)}")
+    
+    for item in unique_items:
+        if item['link'] in seen_links:
+            continue
+            
+        # 检查内容相关性
+        title = item.get('title', '')
+        snippet = item.get('snippet', '')
+        text_check = f"{title} {snippet}"
+        
+        # 如果是 Search 来源，必须检查关键词；Explore 来源理论上已经检查过了，但再查一次也无妨
+        if not keyword_re.search(text_check):
+            # 只有当 title 很短且 snippet 为空时，可能会误杀。但宁可误杀不可放过无关内容。
+            # 稍微放宽一点：如果来源是 Explore，我们信任它的内部过滤（除非内部过滤失效）
+            # 但为了保证用户体验，这里统一执行严格过滤
+            continue
+            
+        seen_links.add(item['link'])
+        final_items.append(item)
+            
+    print(f"Total items after final filtering: {len(final_items)}")
             
     if not final_items:
         print("No XHS data found (search + explore failed). Returning empty.")
