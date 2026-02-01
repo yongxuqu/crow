@@ -10,3 +10,4 @@ supabase
 python-dotenv
 altair<6
 praw
+duckduckgo-search

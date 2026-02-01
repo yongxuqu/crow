@@ -12,6 +12,11 @@ try:
     import praw
 except ImportError:
     praw = None
+try:
+    from duckduckgo_search import DDGS
+except ImportError:
+    DDGS = None
+
 from db_utils import get_news_from_db, save_news_to_db, get_reddit_from_db, save_reddit_to_db, get_github_trending_from_db, save_github_trending_to_db, get_xhs_from_db, save_xhs_to_db
 from bs4 import BeautifulSoup
 import urllib.parse
@@ -568,90 +573,59 @@ def get_github_trending(target_date=None):
         
     return pd.DataFrame(items)
 
-def fetch_xhs_search_bing(keywords):
+def fetch_xhs_search_ddg(keywords):
     """
-    通过 Bing Search 搜索小红书相关内容
+    通过 DuckDuckGo Search 搜索小红书相关内容
+    替代不稳定的 Bing Search
     site:xiaohongshu.com {keywords}
     """
+    if not DDGS:
+        print("DuckDuckGo Search not installed.")
+        return []
+
     items = []
-    # 构造查询
-    base_url = "https://www.bing.com/search"
-    
-    # 组合查询词
     query = f'site:xiaohongshu.com {keywords}'
-    params = {
-        'q': query,
-        'filters': 'ex1:"ez2"', # 限制时间为过去一周 (Past Week)
-        'rdr': 1
-    }
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
-    }
-    
-    print(f"Searching Bing for XHS: {query} with time filter")
+    print(f"Searching DDG for XHS: {query}")
     
     try:
-        response = requests.get(base_url, params=params, headers=headers, timeout=8)
-        if response.status_code != 200:
-            print(f"Bing search failed: {response.status_code}")
-            return []
+        with DDGS() as ddgs:
+            # region='cn-zh' 尝试针对中国区优化，或者不加
+            # time='w' (past week), 'd' (past day), 'm' (past month)
+            results = ddgs.text(query, region='wt-wt', safesearch='off', time='w', max_results=10)
             
-        soup = BeautifulSoup(response.text, 'html.parser')
-        results = soup.select('li.b_algo')
-        
-        for res in results:
-            try:
-                h2 = res.select_one('h2 a')
-                if not h2: continue
-                
-                title = h2.get_text()
-                link = h2.get('href')
-                
-                # Snippet
-                snippet_div = res.select_one('div.b_caption p')
-                snippet = snippet_div.get_text() if snippet_div else ""
-                
-                # 尝试提取日期 (格式如 "2天前", "2024-1-20", "Feb 15, 2024")
-                date_str = datetime.now().strftime('%Y-%m-%d') # 默认今天
-                
-                # 1. 优先从 Snippet 开头提取日期 (Bing 特性)
-                # 格式通常是 "3 days ago · " 或 "Jan 20, 2024 · "
-                snippet_date_match = re.match(r'^([^·]+)·', snippet)
-                if snippet_date_match:
-                    date_text = snippet_date_match.group(1).strip()
-                    try:
-                        # 尝试解析相对时间
-                        if 'day' in date_text or '天' in date_text:
-                            days = int(re.search(r'(\d+)', date_text).group(1))
+            for res in results:
+                try:
+                    title = res.get('title', '')
+                    link = res.get('href', '')
+                    snippet = res.get('body', '')
+                    
+                    if not title or not link:
+                        continue
+
+                    # 简单的日期提取逻辑 (DDG 返回的 body 通常没有明确日期，只能从文本里猜)
+                    date_str = datetime.now().strftime('%Y-%m-%d')
+                    
+                    # 尝试从 snippet 提取 "2 days ago", "Jan 20" 等
+                    # 这里沿用之前的逻辑，或者简化
+                    if '天前' in snippet:
+                         match = re.search(r'(\d+)天前', snippet)
+                         if match:
+                            days = int(match.group(1))
                             date_str = (datetime.now() - pd.Timedelta(days=days)).strftime('%Y-%m-%d')
-                        elif 'hour' in date_text or '小时' in date_text or 'min' in date_text or '分' in date_text:
-                            date_str = datetime.now().strftime('%Y-%m-%d')
-                        else:
-                            # 尝试解析绝对时间
-                            parsed_date = parser.parse(date_text, fuzzy=True)
-                            date_str = parsed_date.strftime('%Y-%m-%d')
-                    except:
-                        pass
-                
-                # 2. 如果上面没提取到，尝试正则匹配 snippet 中的日期
-                if date_str == datetime.now().strftime('%Y-%m-%d') and not snippet_date_match:
-                     date_match = re.search(r'(\d{4}[-/年]\d{1,2}[-/月]\d{1,2})', snippet)
-                     if date_match:
-                          date_str = date_match.group(1).replace('年','-').replace('月','-').replace('日','')
-                
-                items.append({
-                    'title': title,
-                    'link': link,
-                    'snippet': snippet,
-                    'keyword': keywords,
-                    'date': date_str
-                })
-            except Exception:
-                continue
-                
+                    
+                    items.append({
+                        'title': title,
+                        'link': link,
+                        'snippet': snippet,
+                        'keyword': keywords,
+                        'date': date_str
+                    })
+                except Exception as e:
+                    print(f"Error parsing DDG result: {e}")
+                    continue
+                    
     except Exception as e:
-        print(f"Error searching Bing: {e}")
+        print(f"Error searching DDG: {e}")
         
     return items
 
@@ -668,24 +642,23 @@ def get_xhs_trends(target_date=None):
         else:
             return pd.DataFrame() # 历史无数据
             
-    # 2. 如果是今天，尝试爬取 (Bing Search)
-    # 关键词组合：针对“女性美妆/拍照” + “独立开发需求”
-    # 用户需求：不一定非要App，可以是热点/痛点/趋势
+    # 2. 如果是今天，尝试爬取 (DuckDuckGo Search)
     search_queries = [
         '"美妆" "痛点" "吐槽"',
         '"拍照" "技巧" "热门"',
         '"女生" "独居" "神器"',
         '"有没有app" "美妆"',
         '"求app" "穿搭"',
-        '"想做一个" "生活" -app', # 寻找“想做一个XXX”但不一定是App的想法
+        '"想做一个" "生活" -app',
         '"好用" "推荐" "冷门"'
     ]
     
     all_items = []
     
-    # 串行执行，避免并发太快被 Bing 封禁
+    # 串行执行
     for q in search_queries:
-        items = fetch_xhs_search_bing(q)
+        # 优先使用 DDG，如果失败可以考虑回退到 Bing (但这里直接替换了)
+        items = fetch_xhs_search_ddg(q)
         if items:
             all_items.extend(items)
             
@@ -698,42 +671,12 @@ def get_xhs_trends(target_date=None):
             unique_items.append(item)
             
     if not unique_items:
-        print("Using mock XHS data (Bing search failed or blocked)")
-        mock_data = [
-            {
-                'title': '求一个能自动给美妆产品试色的APP - 小红书',
-                'link': 'https://www.xiaohongshu.com/discovery/item/65a1234567890',
-                'snippet': '每次买口红都要去专柜试色太麻烦了，有没有app可以AR试色比较准的？现有的几个都感觉颜色偏差好大...',
-                'keyword': '美妆需求',
-                'date': today_str
-            },
-            {
-                'title': '最近很火的CCD拍照参数分享，无需后期！',
-                'link': 'https://www.xiaohongshu.com/discovery/item/65b9876543210',
-                'snippet': '复古胶片感真的太绝了，把参数分享给大家，直接原图直出！#CCD #拍照技巧',
-                'keyword': '拍照热点',
-                'date': today_str
-            },
-            {
-                'title': '独居女生必看！这些智能家居真的能保命',
-                'link': 'https://www.xiaohongshu.com/discovery/item/65c1122334455',
-                'snippet': '可视门铃、阻门器...这些东西真的不是智商税，关键时刻能救命！',
-                'keyword': '女生安全',
-                'date': (datetime.now() - pd.Timedelta(days=1)).strftime('%Y-%m-%d')
-            },
-             {
-                'title': '想做一个专门记录经期的简洁工具，不要广告',
-                'link': 'https://www.xiaohongshu.com/discovery/item/65d9988776655',
-                'snippet': '现在的经期助手广告太多了，而且功能花里胡哨，我就想要个最简单的记录功能...',
-                'keyword': '开发需求',
-                'date': (datetime.now() - pd.Timedelta(days=2)).strftime('%Y-%m-%d')
-            }
-        ]
-        unique_items = mock_data
+        print("No XHS data found (DDG search failed). Returning empty.")
+        # 彻底移除 Mock Data，宁缺毋滥
+        return pd.DataFrame()
     
-    # 存入数据库 (排除 mock 数据)
-    if unique_items and unique_items[0]['keyword'] != '美妆需求': # 简单判断是否 Mock
-        save_xhs_to_db(unique_items, today_str)
+    # 存入数据库
+    save_xhs_to_db(unique_items, today_str)
         
     return pd.DataFrame(unique_items)
 
