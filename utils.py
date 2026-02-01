@@ -606,8 +606,9 @@ def fetch_xhs_search_serper(keywords):
     # q: 查询词
     # tbs: "qdr:w" (过去一周), "qdr:d" (过去一天)
     # num: 结果数量
+    # 排除用户主页 (-site:xiaohongshu.com/user/)
     payload = json.dumps({
-        "q": f"site:xiaohongshu.com {keywords}",
+        "q": f"site:xiaohongshu.com {keywords} -site:xiaohongshu.com/user/",
         "tbs": "qdr:w", 
         "num": 10
     })
@@ -634,6 +635,14 @@ def fetch_xhs_search_serper(keywords):
             date_str = res.get("date", "") # Serper 有时会直接返回日期字段
             
             if not title or not link:
+                continue
+                
+            # 过滤无效数据 (用户主页、无内容页面)
+            if "user/profile" in link or "No information is available" in snippet:
+                continue
+            
+            # 过滤标题为 URL 的情况
+            if title.startswith("http") or "xiaohongshu.com" in title:
                 continue
                 
             # 处理日期
@@ -683,7 +692,8 @@ def fetch_xhs_search_ddg(keywords):
         return []
 
     items = []
-    query = f'site:xiaohongshu.com {keywords}'
+    # 排除用户主页
+    query = f'site:xiaohongshu.com {keywords} -site:xiaohongshu.com/user/'
     print(f"Searching DDG for XHS: {query}")
     
     try:
@@ -704,6 +714,12 @@ def fetch_xhs_search_ddg(keywords):
                     snippet = res.get('body', '')
                     
                     if not title or not link:
+                        continue
+                        
+                    # 过滤无效数据
+                    if "user/profile" in link or "No information is available" in snippet:
+                        continue
+                    if title.startswith("http") or "xiaohongshu.com" in title:
                         continue
 
                     # 简单的日期提取逻辑 (DDG 返回的 body 通常没有明确日期，只能从文本里猜)
@@ -742,16 +758,24 @@ def get_xhs_trends(target_date=None):
         print(f"Querying DB for XHS on {query_date}...")
         db_data = get_xhs_from_db(query_date)
         if db_data:
-            # 检查是否是已知的脏数据 (Mock Data)
-            # 特征：标题包含 "求一个能自动给美妆产品试色的APP"
+            # 检查是否是已知的脏数据 (Mock Data 或无效抓取数据)
+            # 特征：标题包含 "求一个能自动给美妆产品试色的APP" 或 标题是 URL 或 包含 user/profile
             is_dirty = False
             for row in db_data:
-                if "求一个能自动给美妆产品试色的APP" in row.get('title', ''):
+                title = row.get('title', '')
+                link = row.get('link', '')
+                if "求一个能自动给美妆产品试色的APP" in title:
+                    is_dirty = True
+                    break
+                if title.startswith("http") or "xiaohongshu.com" in title:
+                    is_dirty = True
+                    break
+                if "user/profile" in link:
                     is_dirty = True
                     break
             
             if is_dirty:
-                 print(f"Found dirty mock data in DB for {query_date}. Ignoring it.")
+                 print(f"Found dirty data in DB for {query_date}. Ignoring it.")
                  return pd.DataFrame() # 返回空，让它不要显示假数据
                  
             return pd.DataFrame(db_data)
@@ -765,12 +789,20 @@ def get_xhs_trends(target_date=None):
     if db_data:
         is_dirty = False
         for row in db_data:
-            if "求一个能自动给美妆产品试色的APP" in row.get('title', ''):
+            title = row.get('title', '')
+            link = row.get('link', '')
+            if "求一个能自动给美妆产品试色的APP" in title:
+                is_dirty = True
+                break
+            if title.startswith("http") or "xiaohongshu.com" in title:
+                is_dirty = True
+                break
+            if "user/profile" in link:
                 is_dirty = True
                 break
         
         if is_dirty:
-            print("Found dirty mock data in DB for TODAY. Deleting and re-fetching...")
+            print("Found dirty data in DB for TODAY. Deleting and re-fetching...")
             delete_xhs_for_date(today_str)
             # 继续往下执行抓取逻辑
         else:
