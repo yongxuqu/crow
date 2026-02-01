@@ -214,16 +214,19 @@ else:
         if selected_data.empty:
             st.warning(f"⚠️ {selected_option} 暂无数据，无法进行 AI 分析。")
         else:
-            # Prepare data context
+            # Prepare data context (limit size to avoid timeout)
             data_context = selected_data.head(30).to_string(index=False)
+            if len(data_context) > 12000:
+                data_context = data_context[:12000] + "\n...(truncated)..."
             
             if "ai_chat_history" not in st.session_state:
                 st.session_state["ai_chat_history"] = []
                 
             # Summarize Button
             if st.button("📝 生成核心趋势总结", type="primary", key="btn_summarize"):
-                with st.spinner("豆包正在阅读数据并生成总结..."):
-                    summary = doubao_client.generate_summary(data_context, context_type=selected_option)
+                with st.chat_message("assistant"):
+                    stream = doubao_client.generate_summary(data_context, context_type=selected_option)
+                    summary = st.write_stream(stream)
                     
                     # Add to history
                     st.session_state["ai_chat_history"].append({"role": "user", "content": f"请总结一下 {selected_option} 的数据。"})
