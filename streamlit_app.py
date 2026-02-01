@@ -193,7 +193,7 @@ else:
     with tab5:
         st.header("🧠 豆包 AI 智能分析")
         
-        if not doubao_client.client:
+        if not doubao_client.api_key:
             st.warning("⚠️ 未配置 AI API Key，无法使用 AI 功能")
             st.info("请在 Streamlit Secrets 或环境变量中配置 `DOUBAO_API_KEY` 和 `DOUBAO_MODEL_ID`。")
             st.stop()
