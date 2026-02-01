@@ -56,7 +56,7 @@ class DoubaoAI:
         }
 
         try:
-            response = requests.post(self.base_url, headers=headers, json=payload, timeout=60)
+            response = requests.post(self.base_url, headers=headers, json=payload, timeout=180)
             if response.status_code == 200:
                 data = response.json()
                 return data['choices'][0]['message']['content']
@@ -86,7 +86,7 @@ class DoubaoAI:
         }
 
         try:
-            with requests.post(self.base_url, headers=headers, json=payload, stream=True, timeout=60) as response:
+            with requests.post(self.base_url, headers=headers, json=payload, stream=True, timeout=180) as response:
                 if response.status_code != 200:
                     yield f"API Error {response.status_code}: {response.text}"
                     return
