@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from utils import get_reddit_hot, get_ai_news, get_github_trending, get_xhs_trends
+from db_utils import supabase
 from datetime import datetime, date
 
 # 设置页面配置
@@ -53,6 +54,14 @@ with st.sidebar:
     if st.button("🔄 刷新数据"):
         st.cache_data.clear()
         st.rerun()
+
+    st.divider()
+    # Supabase 状态指示器
+    if supabase:
+        st.success("✅ Supabase 数据库已连接")
+    else:
+        st.error("❌ Supabase 未连接 (数据无法保存)")
+        st.caption("请检查 Streamlit Secrets 配置中是否包含 SUPABASE_URL 和 SUPABASE_KEY")
 
 # 标题
 st.title(f"🚀 AI & IndieDev Daily ({selected_date.strftime('%Y-%m-%d')})")
