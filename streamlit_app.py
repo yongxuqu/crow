@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import os
 from utils import get_reddit_hot, get_ai_news, get_github_trending, get_xhs_trends
 from db_utils import supabase
 from datetime import datetime, date
@@ -161,11 +162,13 @@ else:
             )
         else:
             st.info("暂无小红书数据")
-            st.warning("⚠️ **抓取提示**：云端环境 (Streamlit Cloud) 可能会被 DuckDuckGo 拦截导致无数据。")
-            st.markdown("""
-            **建议解决方案 (一劳永逸)**：
-            1. 注册 [Serper.dev](https://serper.dev/) (免费，每月2500次调用，足够个人使用)。
-            2. 获取 API Key。
-            3. 在 Streamlit Secrets 中添加 `SERPER_API_KEY = "你的Key"`。
-            4. 只有配置了 Serper Key，才能保证在云端稳定抓取搜索结果。
-            """)
+            # 如果没有配置 Serper Key，才显示提示
+            if not st.secrets.get("SERPER_API_KEY") and not os.environ.get("SERPER_API_KEY"):
+                st.warning("⚠️ **抓取提示**：云端环境 (Streamlit Cloud) 可能会被 DuckDuckGo 拦截导致无数据。")
+                st.markdown("""
+                **建议解决方案 (一劳永逸)**：
+                1. 注册 [Serper.dev](https://serper.dev/) (免费，每月2500次调用，足够个人使用)。
+                2. 获取 API Key。
+                3. 在 Streamlit Secrets 中添加 `SERPER_API_KEY = "你的Key"`。
+                4. 只有配置了 Serper Key，才能保证在云端稳定抓取搜索结果。
+                """)

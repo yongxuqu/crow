@@ -594,6 +594,9 @@ def fetch_xhs_search_serper(keywords):
         pass
         
     if not api_key:
+        api_key = os.environ.get("SERPER_API_KEY")
+        
+    if not api_key:
         return []
         
     print(f"Using Serper API for XHS: {keywords}")
