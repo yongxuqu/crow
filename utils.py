@@ -17,7 +17,12 @@ try:
 except ImportError:
     DDGS = None
 
-from db_utils import get_news_from_db, save_news_to_db, get_reddit_from_db, save_reddit_to_db, get_github_trending_from_db, save_github_trending_to_db, get_xhs_from_db, save_xhs_to_db
+from db_utils import (
+    get_news_from_db, save_news_to_db, 
+    get_reddit_from_db, save_reddit_to_db,
+    get_github_trending_from_db, save_github_trending_to_db,
+    get_xhs_from_db, save_xhs_to_db, delete_xhs_for_date
+)
 from bs4 import BeautifulSoup
 import urllib.parse
 
@@ -573,6 +578,97 @@ def get_github_trending(target_date=None):
         
     return pd.DataFrame(items)
 
+import json
+
+def fetch_xhs_search_serper(keywords):
+    """
+    使用 Serper.dev API (Google Search Wrapper) 搜索小红书
+    这是最稳定、最适合云端部署的方案，不会被反爬拦截。
+    需要配置 SERPER_API_KEY
+    """
+    api_key = None
+    try:
+        if "SERPER_API_KEY" in st.secrets:
+            api_key = st.secrets["SERPER_API_KEY"]
+    except:
+        pass
+        
+    if not api_key:
+        return []
+        
+    print(f"Using Serper API for XHS: {keywords}")
+    url = "https://google.serper.dev/search"
+    
+    # 构造 Payload
+    # q: 查询词
+    # tbs: "qdr:w" (过去一周), "qdr:d" (过去一天)
+    # num: 结果数量
+    payload = json.dumps({
+        "q": f"site:xiaohongshu.com {keywords}",
+        "tbs": "qdr:w", 
+        "num": 10
+    })
+    
+    headers = {
+        'X-API-KEY': api_key,
+        'Content-Type': 'application/json'
+    }
+    
+    items = []
+    try:
+        response = requests.request("POST", url, headers=headers, data=payload, timeout=10)
+        if response.status_code != 200:
+            print(f"Serper API failed: {response.status_code} - {response.text}")
+            return []
+            
+        data = response.json()
+        organic_results = data.get("organic", [])
+        
+        for res in organic_results:
+            title = res.get("title")
+            link = res.get("link")
+            snippet = res.get("snippet", "")
+            date_str = res.get("date", "") # Serper 有时会直接返回日期字段
+            
+            if not title or not link:
+                continue
+                
+            # 处理日期
+            if not date_str:
+                date_str = datetime.now().strftime('%Y-%m-%d')
+                # 尝试从 snippet 提取 "3 days ago"
+                if 'days ago' in snippet:
+                     try:
+                        days = int(re.search(r'(\d+) days ago', snippet).group(1))
+                        date_str = (datetime.now() - pd.Timedelta(days=days)).strftime('%Y-%m-%d')
+                     except:
+                        pass
+                elif 'hours ago' in snippet:
+                     date_str = datetime.now().strftime('%Y-%m-%d')
+            else:
+                # Serper 返回的 date 可能是 "Jan 25, 2024" 或 "2 days ago"
+                if 'ago' in date_str:
+                     date_str = datetime.now().strftime('%Y-%m-%d') # 简化处理
+                else:
+                    try:
+                        parsed = parser.parse(date_str)
+                        date_str = parsed.strftime('%Y-%m-%d')
+                    except:
+                        date_str = datetime.now().strftime('%Y-%m-%d')
+
+            items.append({
+                'title': title,
+                'link': link,
+                'snippet': snippet,
+                'keyword': keywords,
+                'date': date_str
+            })
+            
+    except Exception as e:
+        print(f"Error calling Serper API: {e}")
+        
+    return items
+
 def fetch_xhs_search_ddg(keywords):
     """
     通过 DuckDuckGo Search 搜索小红书相关内容
@@ -638,11 +734,40 @@ def get_xhs_trends(target_date=None):
         print(f"Querying DB for XHS on {query_date}...")
         db_data = get_xhs_from_db(query_date)
         if db_data:
+            # 检查是否是已知的脏数据 (Mock Data)
+            # 特征：标题包含 "求一个能自动给美妆产品试色的APP"
+            is_dirty = False
+            for row in db_data:
+                if "求一个能自动给美妆产品试色的APP" in row.get('title', ''):
+                    is_dirty = True
+                    break
+            
+            if is_dirty:
+                 print(f"Found dirty mock data in DB for {query_date}. Ignoring it.")
+                 return pd.DataFrame() # 返回空，让它不要显示假数据
+                 
             return pd.DataFrame(db_data)
         else:
             return pd.DataFrame() # 历史无数据
             
-    # 2. 如果是今天，尝试爬取 (DuckDuckGo Search)
+    # 2. 如果是今天，先检查数据库，如果有数据且不是脏数据，则返回
+    # 如果是脏数据，则删除并重新抓取
+    print(f"Checking DB for XHS on {today_str}...")
+    db_data = get_xhs_from_db(today_str)
+    if db_data:
+        is_dirty = False
+        for row in db_data:
+            if "求一个能自动给美妆产品试色的APP" in row.get('title', ''):
+                is_dirty = True
+                break
+        
+        if is_dirty:
+            print("Found dirty mock data in DB for TODAY. Deleting and re-fetching...")
+            delete_xhs_for_date(today_str)
+            # 继续往下执行抓取逻辑
+        else:
+            print("Found valid data in DB for TODAY.")
+            return pd.DataFrame(db_data)
     search_queries = [
         '"美妆" "痛点" "吐槽"',
         '"拍照" "技巧" "热门"',
@@ -657,8 +782,13 @@ def get_xhs_trends(target_date=None):
     
     # 串行执行
     for q in search_queries:
-        # 优先使用 DDG，如果失败可以考虑回退到 Bing (但这里直接替换了)
-        items = fetch_xhs_search_ddg(q)
+        # 1. 优先尝试 Serper (Google API)，最稳定
+        items = fetch_xhs_search_serper(q)
+        
+        # 2. 如果没配置 Serper 或用完了，回退到 DuckDuckGo
+        if not items:
+            items = fetch_xhs_search_ddg(q)
+            
         if items:
             all_items.extend(items)
             

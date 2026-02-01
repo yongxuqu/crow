@@ -171,6 +171,19 @@ def save_github_trending_to_db(items, date_str):
     except Exception as e:
         print(f"Error saving github data to DB: {e}")
 
+def delete_xhs_for_date(date_str):
+    """
+    删除指定日期的小红书数据 (用于清理脏数据)
+    """
+    if not supabase:
+        return
+        
+    try:
+        supabase.table('xiaohongshu_trends').delete().eq('fetched_date', date_str).execute()
+        print(f"Deleted XHS data for {date_str}")
+    except Exception as e:
+        print(f"Error deleting XHS data: {e}")
+
 def get_xhs_from_db(date_str):
     """
     从 Supabase 获取指定日期的小红书热点
