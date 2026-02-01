@@ -685,9 +685,14 @@ def fetch_xhs_search_ddg(keywords):
     
     try:
         with DDGS() as ddgs:
-            # region='cn-zh' 尝试针对中国区优化，或者不加
-            # time='w' (past week), 'd' (past day), 'm' (past month)
-            results = ddgs.text(query, region='wt-wt', safesearch='off', time='w', max_results=10)
+            # 第一次尝试: 限制时间为过去一周 (time='w')
+            print(f"Searching DDG (time='w') for: {query}")
+            results = list(ddgs.text(query, region='wt-wt', safesearch='off', time='w', max_results=10))
+            
+            # 如果没结果，尝试放宽时间限制 (移除 time='w')
+            if not results:
+                print(f"No results with time='w', retrying without time limit for: {query}")
+                results = list(ddgs.text(query, region='wt-wt', safesearch='off', max_results=10))
             
             for res in results:
                 try:
