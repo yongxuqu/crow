@@ -6,9 +6,20 @@ from db_utils import supabase
 from ai_helper import get_doubao_client
 from datetime import datetime, date
 
-# AI 配置 (从用户输入或 Secrets 获取)
-DOUBAO_API_KEY = "49907113-db5c-4557-9633-80f9537bd6ca"
-DOUBAO_MODEL_ID = "doubao-seed-1-6-251015"
+# AI 配置 (从 Secrets 获取)
+try:
+    DOUBAO_API_KEY = st.secrets["doubao"]["api_key"]
+    DOUBAO_MODEL_ID = st.secrets["doubao"]["model_id"]
+except (FileNotFoundError, KeyError):
+    # 本地开发如果没有 secrets.toml，或者 secrets 中没有相关配置
+    DOUBAO_API_KEY = None
+    DOUBAO_MODEL_ID = None
+
+if not DOUBAO_API_KEY:
+    # 尝试从环境变量获取 (兼容性)
+    DOUBAO_API_KEY = os.environ.get("DOUBAO_API_KEY")
+    DOUBAO_MODEL_ID = os.environ.get("DOUBAO_MODEL_ID")
+
 doubao_client = get_doubao_client(api_key=DOUBAO_API_KEY, model_id=DOUBAO_MODEL_ID)
 
 # 设置页面配置
@@ -181,6 +192,12 @@ else:
 
     with tab5:
         st.header("🧠 豆包 AI 智能分析")
+        
+        if not doubao_client.client:
+            st.warning("⚠️ 未配置 AI API Key，无法使用 AI 功能")
+            st.info("请在 Streamlit Secrets 或环境变量中配置 `DOUBAO_API_KEY` 和 `DOUBAO_MODEL_ID`。")
+            st.stop()
+
         st.caption(f"Powered by Doubao (Model: {DOUBAO_MODEL_ID})")
         
         # Data Source Selection

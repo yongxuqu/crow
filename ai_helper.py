@@ -12,15 +12,21 @@ class DoubaoAI:
         
         if not self.api_key:
             try:
-                self.api_key = st.secrets["DOUBAO_API_KEY"]
+                self.api_key = st.secrets["doubao"]["api_key"]
             except:
-                pass
+                try:
+                    self.api_key = st.secrets["DOUBAO_API_KEY"]
+                except:
+                    pass
         
         if not self.model_id:
             try:
-                self.model_id = st.secrets["DOUBAO_MODEL_ID"]
+                self.model_id = st.secrets["doubao"]["model_id"]
             except:
-                pass
+                try:
+                    self.model_id = st.secrets["DOUBAO_MODEL_ID"]
+                except:
+                    pass
 
     def generate_summary(self, text_content, context_type="general"):
         if not self.api_key:
