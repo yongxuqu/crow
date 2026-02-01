@@ -602,13 +602,11 @@ def fetch_xhs_search_serper(keywords):
     print(f"Using Serper API for XHS: {keywords}")
     url = "https://google.serper.dev/search"
     
-    # 构造 Payload
-    # q: 查询词
-    # tbs: "qdr:w" (过去一周), "qdr:d" (过去一天)
-    # num: 结果数量
-    # 排除用户主页 (-site:xiaohongshu.com/user/)
+    query = keywords
+    if "site:" not in keywords:
+        query = f"site:xiaohongshu.com {keywords} -site:xiaohongshu.com/user/"
     payload = json.dumps({
-        "q": f"site:xiaohongshu.com {keywords} -site:xiaohongshu.com/user/",
+        "q": query,
         "tbs": "qdr:w", 
         "num": 10
     })
@@ -627,6 +625,21 @@ def fetch_xhs_search_serper(keywords):
             
         data = response.json()
         organic_results = data.get("organic", [])
+        if not organic_results:
+            broad_query = re.sub(r'\bsite:[^\s]+', '', query)
+            broad_query = re.sub(r'-site:[^\s]+', '', broad_query)
+            broad_query = re.sub(r'\s+', ' ', broad_query).strip()
+            if "小红书" not in broad_query:
+                broad_query = f"{broad_query} 小红书".strip()
+            payload = json.dumps({
+                "q": broad_query,
+                "tbs": "qdr:w",
+                "num": 10
+            })
+            response = requests.request("POST", url, headers=headers, data=payload, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                organic_results = data.get("organic", [])
         
         for res in organic_results:
             title = res.get("title")
@@ -637,13 +650,14 @@ def fetch_xhs_search_serper(keywords):
             if not title or not link:
                 continue
                 
-            # 过滤无效数据 (用户主页、无内容页面)
+            if "xiaohongshu.com" not in link:
+                continue
+                
             if "user/profile" in link or "No information is available" in snippet:
                 continue
             
-            # 过滤标题为 URL 的情况
             if title.startswith("http") or "xiaohongshu.com" in title:
-                continue
+                title = snippet if snippet else "小红书笔记"
                 
             # 处理日期
             if not date_str:
@@ -692,8 +706,9 @@ def fetch_xhs_search_ddg(keywords):
         return []
 
     items = []
-    # 排除用户主页
-    query = f'site:xiaohongshu.com {keywords} -site:xiaohongshu.com/user/'
+    query = keywords
+    if "site:" not in keywords:
+        query = f'site:xiaohongshu.com {keywords} -site:xiaohongshu.com/user/'
     print(f"Searching DDG for XHS: {query}")
     
     try:
@@ -716,11 +731,10 @@ def fetch_xhs_search_ddg(keywords):
                     if not title or not link:
                         continue
                         
-                    # 过滤无效数据
                     if "user/profile" in link or "No information is available" in snippet:
                         continue
                     if title.startswith("http") or "xiaohongshu.com" in title:
-                        continue
+                        title = snippet if snippet else "小红书笔记"
 
                     # 简单的日期提取逻辑 (DDG 返回的 body 通常没有明确日期，只能从文本里猜)
                     date_str = datetime.now().strftime('%Y-%m-%d')
@@ -748,6 +762,134 @@ def fetch_xhs_search_ddg(keywords):
         print(f"Error searching DDG: {e}")
         
     return items
+
+def fetch_xhs_explore_hot(limit=30):
+    url = "https://www.xiaohongshu.com/explore"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            return []
+        html = response.text
+        key = "__INITIAL_STATE__="
+        idx = html.find(key)
+        if idx == -1:
+            return []
+        start = html.find("{", idx)
+        if start == -1:
+            return []
+        brace = 0
+        in_str = False
+        esc = False
+        end = -1
+        for i in range(start, len(html)):
+            c = html[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif c == "\\":
+                    esc = True
+                elif c == "\"":
+                    in_str = False
+            else:
+                if c == "\"":
+                    in_str = True
+                elif c == "{":
+                    brace += 1
+                elif c == "}":
+                    brace -= 1
+                    if brace == 0:
+                        end = i + 1
+                        break
+        if end == -1:
+            return []
+        raw = html[start:end].replace("undefined", "null")
+        data = json.loads(raw)
+        notes = []
+        
+        # 1. 尝试从 feed.feeds 中提取 (SSR data)
+        if 'feed' in data and 'feeds' in data['feed']:
+            feeds = data['feed']['feeds']
+            if isinstance(feeds, list):
+                for item in feeds:
+                    if isinstance(item, dict) and 'noteCard' in item:
+                        note_obj = item['noteCard']
+                        # 如果 noteCard 里没有 id，尝试从外层 item 获取
+                        if 'id' not in note_obj and 'id' in item:
+                            note_obj['id'] = item['id']
+                        notes.append(note_obj)
+        
+        # 2. 如果没找到，尝试递归查找 (兼容其他结构)
+        if not notes:
+            def walk(obj):
+                if isinstance(obj, dict):
+                    if "noteCard" in obj and isinstance(obj["noteCard"], dict):
+                        notes.append(obj["noteCard"])
+                    if "note" in obj and isinstance(obj["note"], dict):
+                        notes.append(obj["note"])
+                    for v in obj.values():
+                        walk(v)
+                elif isinstance(obj, list):
+                    for v in obj:
+                        walk(v)
+            walk(data)
+            
+        items = []
+        seen = set()
+        # 暂不使用关键词过滤，因为热门内容通常是高质量的
+        # keyword_re = re.compile(r"美妆|化妆|护肤|拍照|写真|修图|穿搭|口红|底妆|眼妆|妆容|皮肤|洁面|面膜|粉底|腮红|美白|眼线|眉毛|睫毛|拍摄|滤镜|自拍|姿势|OOTD|探店|美食|好物|测评|种草|独居|女生")
+        
+        for note in notes:
+            note_id = note.get("id") or note.get("noteId")
+            if not note_id or note_id in seen:
+                continue
+            seen.add(note_id)
+            
+            title = note.get("displayTitle") or note.get("title") or ""
+            # desc 有时候在 noteCard 里没有，可能需要进一步详情，但这里先取 title
+            desc = note.get("desc") or note.get("description") or ""
+            
+            # 如果没有标题，尝试用 user nickname 拼凑，或者直接跳过
+            if not title:
+                continue
+                
+            text = f"{title} {desc}".strip()
+            
+            # 暂时放宽过滤条件，如果是 Explore 首页的热门内容，通常都是高质量的
+            # if not keyword_re.search(text):
+            #    continue
+            
+            link = f"https://www.xiaohongshu.com/explore/{note_id}"
+            
+            # 尝试提取图片 (cover)
+            cover = ""
+            if "cover" in note and "urlDefault" in note["cover"]:
+                cover = note["cover"]["urlDefault"]
+            elif "imageList" in note and note["imageList"]:
+                 cover = note["imageList"][0].get("urlDefault", "")
+                 
+            # 提取点赞数
+            likes = "0"
+            if "interactInfo" in note:
+                likes = note["interactInfo"].get("likedCount", "0")
+
+            items.append({
+                "title": title,
+                "link": link,
+                "snippet": f"{desc[:100]}... (Likes: {likes})",
+                "keyword": "explore",
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "cover": cover
+            })
+            if len(items) >= limit:
+                break
+        return items
+    except Exception as e:
+
+        print(f"Error fetching XHS explore: {e}")
+        return []
 
 def get_xhs_trends(target_date=None):
     # 1. 检查数据库
@@ -808,15 +950,21 @@ def get_xhs_trends(target_date=None):
         else:
             print("Found valid data in DB for TODAY.")
             return pd.DataFrame(db_data)
-    search_queries = [
-        '"美妆" "痛点" "吐槽"',
-        '"拍照" "技巧" "热门"',
-        '"女生" "独居" "神器"',
-        '"有没有app" "美妆"',
-        '"求app" "穿搭"',
-        '"想做一个" "生活" -app',
-        '"好用" "推荐" "冷门"'
+    base_terms = [
+        '美妆 痛点 吐槽',
+        '拍照 技巧 热门',
+        '女生 独居 神器',
+        '穿搭 推荐',
+        '护肤 好用 冷门',
+        '素人 变美 经验',
+        '化妆 教程 新手',
+        '拍照 姿势 修图'
     ]
+    search_queries = []
+    for term in base_terms:
+        search_queries.append(f'site:xiaohongshu.com/explore {term} -site:xiaohongshu.com/user/')
+        search_queries.append(f'site:xiaohongshu.com/discovery/item {term} -site:xiaohongshu.com/user/')
+        search_queries.append(term)
     
     all_items = []
     
@@ -841,14 +989,30 @@ def get_xhs_trends(target_date=None):
             unique_items.append(item)
             
     if not unique_items:
-        print("No XHS data found (DDG search failed). Returning empty.")
-        # 彻底移除 Mock Data，宁缺毋滥
+        print("Search failed or returned no results, fetching explore feed...")
+    
+    # 无论搜索结果如何，都尝试获取首页热门数据进行补充
+    explore_items = fetch_xhs_explore_hot(limit=20)
+    if explore_items:
+        print(f"Fetched {len(explore_items)} items from Explore")
+        all_items.extend(explore_items)
+            
+    # 再次去重 (因为 search 和 explore 可能会有重复，虽然概率很低)
+    seen_links = set()
+    final_items = []
+    for item in all_items:
+        if item['link'] not in seen_links:
+            seen_links.add(item['link'])
+            final_items.append(item)
+            
+    if not final_items:
+        print("No XHS data found (search + explore failed). Returning empty.")
         return pd.DataFrame()
     
     # 存入数据库
-    save_xhs_to_db(unique_items, today_str)
+    save_xhs_to_db(final_items, today_str)
         
-    return pd.DataFrame(unique_items)
+    return pd.DataFrame(final_items)
 
 if __name__ == "__main__":
     # Test
@@ -856,3 +1020,5 @@ if __name__ == "__main__":
     print(get_reddit_hot().head())
     print("\nTesting AI News Fetcher...")
     print(get_ai_news().head())
+    print("\nTesting XHS Trends Fetcher...")
+    print(get_xhs_trends().head())
