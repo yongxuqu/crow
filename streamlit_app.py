@@ -74,6 +74,12 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
+    
+    # 翻译开关
+    st.title("🌐 语言设置")
+    enable_translation = st.toggle("🇨🇳 开启中文翻译 (AI Translate)", value=False, help="开启后将使用 AI 翻译所有英文内容，可能会增加加载时间。")
+    
+    st.divider()
     # Supabase 状态指示器
     if supabase:
         st.success("✅ Supabase 数据库已连接")
@@ -98,6 +104,75 @@ def load_data(target_date):
 # 加载数据
 with st.spinner('正在获取最新数据...'):
     ai_data, reddit_data, github_data, xhs_data, web_ai_data = load_data(selected_date)
+
+# 翻译处理逻辑
+if enable_translation and doubao_client.api_key:
+    translate_cache_key = f"trans_{selected_date}_{len(ai_data)}_{len(reddit_data)}_{len(github_data)}_{len(web_ai_data)}"
+    
+    if "translation_cache" not in st.session_state:
+        st.session_state["translation_cache"] = {}
+        
+    if translate_cache_key not in st.session_state["translation_cache"]:
+        with st.spinner("🇨🇳 正在进行 AI 智能翻译，请稍候..."):
+            # 1. Translate AI News (RSS)
+            if not ai_data.empty:
+                titles = ai_data['title'].tolist()
+                summaries = ai_data['summary'].tolist()
+                # 批量翻译，分批次避免过长
+                # 这里简单处理，一次翻译所有 (假设不超过 limit)，实际建议分块
+                # 为了响应速度，我们只翻译前 20 条
+                limit = 20
+                trans_titles = doubao_client.batch_translate(titles[:limit])
+                trans_summaries = doubao_client.batch_translate(summaries[:limit])
+                
+                # 补全剩余未翻译的
+                trans_titles.extend(titles[limit:])
+                trans_summaries.extend(summaries[limit:])
+                
+                ai_data = ai_data.copy()
+                ai_data['title'] = trans_titles
+                ai_data['summary'] = trans_summaries
+                
+            # 2. Translate Reddit
+            if not reddit_data.empty:
+                titles = reddit_data['title'].tolist()
+                limit = 20
+                trans_titles = doubao_client.batch_translate(titles[:limit])
+                trans_titles.extend(titles[limit:])
+                
+                reddit_data = reddit_data.copy()
+                reddit_data['title'] = trans_titles
+                
+            # 3. Translate GitHub
+            if not github_data.empty:
+                descs = github_data['description'].fillna("").tolist()
+                limit = 20
+                trans_descs = doubao_client.batch_translate(descs[:limit])
+                trans_descs.extend(descs[limit:])
+                
+                github_data = github_data.copy()
+                github_data['description'] = trans_descs
+                
+            # 4. Translate Web AI News
+            if not web_ai_data.empty:
+                titles = web_ai_data['title'].tolist()
+                snippets = web_ai_data['snippet'].tolist()
+                limit = 10
+                trans_titles = doubao_client.batch_translate(titles[:limit])
+                trans_snippets = doubao_client.batch_translate(snippets[:limit])
+                
+                trans_titles.extend(titles[limit:])
+                trans_snippets.extend(snippets[limit:])
+                
+                web_ai_data = web_ai_data.copy()
+                web_ai_data['title'] = trans_titles
+                web_ai_data['snippet'] = trans_snippets
+
+            # Store in cache
+            st.session_state["translation_cache"][translate_cache_key] = (ai_data, reddit_data, github_data, web_ai_data)
+    else:
+        # Load from cache
+        ai_data, reddit_data, github_data, web_ai_data = st.session_state["translation_cache"][translate_cache_key]
 
 # 检查是否有数据
 if ai_data.empty and reddit_data.empty and github_data.empty and xhs_data.empty and web_ai_data.empty:

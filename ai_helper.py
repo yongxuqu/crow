@@ -122,5 +122,68 @@ class DoubaoAI:
         except Exception as e:
             yield f"Stream Error: {str(e)}"
 
+    def batch_translate(self, texts):
+        """
+        批量翻译文本列表 (English -> Chinese)
+        Returns: list of translated strings
+        """
+        if not self.api_key or not texts:
+            return texts
+            
+        # 简单处理：将文本列表合并为一个 prompt 发送，然后解析返回结果
+        # 为了稳定性，我们使用 JSON 格式交互
+        
+        system_prompt = """You are a professional translator. 
+        Translate the following list of texts from English to Chinese (Simplified).
+        Maintain the original meaning, tone, and formatting.
+        Return ONLY a valid JSON array of strings.
+        Example Input: ["Hello", "World"]
+        Example Output: ["你好", "世界"]
+        """
+        
+        user_content = json.dumps(texts, ensure_ascii=False)
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content}
+        ]
+        
+        payload = {
+            "model": self.model_id,
+            "messages": messages,
+            "temperature": 0.3, # 低温度以保证格式稳定
+            "stream": False
+        }
+        
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}"
+        }
+        
+        try:
+            response = requests.post(self.base_url, headers=headers, json=payload, timeout=60)
+            if response.status_code == 200:
+                res_json = response.json()
+                content = res_json['choices'][0]['message']['content']
+                # 尝试解析 JSON
+                # 有时候模型会返回 markdown code block，需要处理
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0].strip()
+                elif "```" in content:
+                    content = content.split("```")[1].split("```")[0].strip()
+                
+                translated_texts = json.loads(content)
+                if isinstance(translated_texts, list) and len(translated_texts) == len(texts):
+                    return translated_texts
+                else:
+                    print("Translation returned invalid format or length mismatch.")
+                    return texts # Fallback
+            else:
+                print(f"Translation API Error: {response.status_code}")
+                return texts
+        except Exception as e:
+            print(f"Translation Exception: {e}")
+            return texts
+
 def get_doubao_client(api_key=None, model_id=None):
     return DoubaoAI(api_key, model_id)
