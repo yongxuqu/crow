@@ -113,60 +113,76 @@ if enable_translation and doubao_client.api_key:
         st.session_state["translation_cache"] = {}
         
     if translate_cache_key not in st.session_state["translation_cache"]:
-        with st.spinner("🇨🇳 正在进行 AI 智能翻译，请稍候..."):
-            # 1. Translate AI News (RSS)
-            if not ai_data.empty:
-                titles = ai_data['title'].tolist()
-                summaries = ai_data['summary'].tolist()
-                # 批量翻译，分批次避免过长
-                # 这里简单处理，一次翻译所有 (假设不超过 limit)，实际建议分块
-                # 为了响应速度，我们只翻译前 20 条
-                limit = 20
-                trans_titles = doubao_client.batch_translate(titles[:limit])
-                trans_summaries = doubao_client.batch_translate(summaries[:limit])
+        with st.spinner("🇨🇳 正在进行 AI 智能翻译 (并行加速中)..."):
+            import concurrent.futures
+            
+            # 定义并行任务函数
+            def exec_translation(key, col, texts, limit):
+                if not texts:
+                    return key, col, []
+                try:
+                    # 分片翻译
+                    part_to_trans = texts[:limit]
+                    rest_part = texts[limit:]
+                    if part_to_trans:
+                        trans_part = doubao_client.batch_translate(part_to_trans)
+                        return key, col, trans_part + rest_part
+                    return key, col, texts
+                except Exception as e:
+                    print(f"Translation task error ({key}-{col}): {e}")
+                    return key, col, texts
+
+            # 提交所有翻译任务
+            results = {}
+            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                futures = []
                 
-                # 补全剩余未翻译的
-                trans_titles.extend(titles[limit:])
-                trans_summaries.extend(summaries[limit:])
+                # 1. AI News Tasks
+                if not ai_data.empty:
+                    futures.append(executor.submit(exec_translation, "ai", "title", ai_data['title'].tolist(), 20))
+                    futures.append(executor.submit(exec_translation, "ai", "summary", ai_data['summary'].tolist(), 20))
                 
+                # 2. Reddit Tasks
+                if not reddit_data.empty:
+                    futures.append(executor.submit(exec_translation, "reddit", "title", reddit_data['title'].tolist(), 20))
+                
+                # 3. GitHub Tasks
+                if not github_data.empty:
+                    futures.append(executor.submit(exec_translation, "github", "description", github_data['description'].fillna("").tolist(), 20))
+                
+                # 4. Web AI News Tasks
+                if not web_ai_data.empty:
+                    futures.append(executor.submit(exec_translation, "web", "title", web_ai_data['title'].tolist(), 10))
+                    futures.append(executor.submit(exec_translation, "web", "snippet", web_ai_data['snippet'].tolist(), 10))
+                
+                # 收集结果
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        key, col, res_list = future.result()
+                        if key not in results:
+                            results[key] = {}
+                        results[key][col] = res_list
+                    except Exception as e:
+                        print(f"Future result error: {e}")
+
+            # 应用结果到 DataFrame
+            if "ai" in results:
                 ai_data = ai_data.copy()
-                ai_data['title'] = trans_titles
-                ai_data['summary'] = trans_summaries
-                
-            # 2. Translate Reddit
-            if not reddit_data.empty:
-                titles = reddit_data['title'].tolist()
-                limit = 20
-                trans_titles = doubao_client.batch_translate(titles[:limit])
-                trans_titles.extend(titles[limit:])
-                
+                if "title" in results["ai"]: ai_data['title'] = results["ai"]["title"]
+                if "summary" in results["ai"]: ai_data['summary'] = results["ai"]["summary"]
+            
+            if "reddit" in results:
                 reddit_data = reddit_data.copy()
-                reddit_data['title'] = trans_titles
+                if "title" in results["reddit"]: reddit_data['title'] = results["reddit"]["title"]
                 
-            # 3. Translate GitHub
-            if not github_data.empty:
-                descs = github_data['description'].fillna("").tolist()
-                limit = 20
-                trans_descs = doubao_client.batch_translate(descs[:limit])
-                trans_descs.extend(descs[limit:])
-                
+            if "github" in results:
                 github_data = github_data.copy()
-                github_data['description'] = trans_descs
+                if "description" in results["github"]: github_data['description'] = results["github"]["description"]
                 
-            # 4. Translate Web AI News
-            if not web_ai_data.empty:
-                titles = web_ai_data['title'].tolist()
-                snippets = web_ai_data['snippet'].tolist()
-                limit = 10
-                trans_titles = doubao_client.batch_translate(titles[:limit])
-                trans_snippets = doubao_client.batch_translate(snippets[:limit])
-                
-                trans_titles.extend(titles[limit:])
-                trans_snippets.extend(snippets[limit:])
-                
+            if "web" in results:
                 web_ai_data = web_ai_data.copy()
-                web_ai_data['title'] = trans_titles
-                web_ai_data['snippet'] = trans_snippets
+                if "title" in results["web"]: web_ai_data['title'] = results["web"]["title"]
+                if "snippet" in results["web"]: web_ai_data['snippet'] = results["web"]["snippet"]
 
             # Store in cache
             st.session_state["translation_cache"][translate_cache_key] = (ai_data, reddit_data, github_data, web_ai_data)
