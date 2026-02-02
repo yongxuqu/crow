@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
-from utils import get_reddit_hot, get_ai_news, get_github_trending, get_xhs_trends
+from utils import get_reddit_hot, get_ai_news, get_github_trending, get_xhs_trends, get_web_ai_news
 from db_utils import supabase
 from ai_helper import get_doubao_client
 from datetime import datetime, date
@@ -91,21 +91,23 @@ def load_data(target_date):
     reddit_hot = get_reddit_hot(target_date)
     github_trending = get_github_trending(target_date)
     xhs_trends = get_xhs_trends(target_date)
-    return ai_news, reddit_hot, github_trending, xhs_trends
+    # Web AI News (实时搜索，不一定非要缓存很久，但为了性能还是缓存一下)
+    web_ai_news = get_web_ai_news(target_date)
+    return ai_news, reddit_hot, github_trending, xhs_trends, web_ai_news
 
 # 加载数据
 with st.spinner('正在获取最新数据...'):
-    ai_data, reddit_data, github_data, xhs_data = load_data(selected_date)
+    ai_data, reddit_data, github_data, xhs_data, web_ai_data = load_data(selected_date)
 
 # 检查是否有数据
-if ai_data.empty and reddit_data.empty and github_data.empty and xhs_data.empty:
+if ai_data.empty and reddit_data.empty and github_data.empty and xhs_data.empty and web_ai_data.empty:
     st.warning(f"没有找到 {selected_date} 的归档数据。如果是今天，可能是网络问题；如果是历史日期，说明当时没有抓取。")
 else:
     # 页面布局
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🤖 每日 AI 动态", "🔥 独立开发热门", "📈 GitHub 热榜", "📕 小红书热点", "🧠 豆包 AI 助手"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🤖 每日 AI 动态", "🔥 独立开发热门", "📈 GitHub 热榜", "📕 小红书热点", "🧠 豆包 AI 助手", "📰 AI新闻 & 选题"])
 
     with tab1:
-        st.header("每日 AI 最新动态")
+        st.header("每日 AI 最新动态 (RSS聚合)")
         if not ai_data.empty:
             for index, row in ai_data.iterrows():
                 # 使用 row['published_str'] 替代 row['published']
@@ -269,4 +271,80 @@ else:
                         full_response = f"Error: {e}"
                     
                     st.session_state["ai_chat_history"].append({"role": "assistant", "content": full_response})
+
+    with tab6:
+        st.header("📰 AI 咨询 & 公众号选题策划")
+        st.caption("利用豆包大模型联网搜索 (Web Search) + 聚合 RSS 资讯，为您生成深度选题。")
+        
+        col_news, col_topics = st.columns([1, 1])
+        
+        combined_news_context = ""
+        
+        with col_news:
+            st.subheader("🌐 今日 AI 重大新闻 (联网聚合)")
+            
+            # 1. Web Search Data
+            st.markdown("#### 🔍 联网搜索结果")
+            if not web_ai_data.empty:
+                for idx, row in web_ai_data.iterrows():
+                    st.markdown(f"**{idx+1}. [{row['title']}]({row['link']})**")
+                    st.caption(f"{row['snippet'][:100]}...")
+            else:
+                st.info("暂无联网搜索数据 (请检查 Serper API Key)")
+                
+            st.divider()
+            
+            # 2. RSS Data (Top 5)
+            st.markdown("#### 📡 重点 RSS 资讯 (Top 5)")
+            if not ai_data.empty:
+                for idx, row in ai_data.head(5).iterrows():
+                    st.markdown(f"**• [{row['title']}]({row['link']})**")
+            else:
+                st.info("暂无 RSS 资讯")
+                
+            # 准备上下文
+            news_list = []
+            if not web_ai_data.empty:
+                news_list.append("【联网搜索热点】:\n" + web_ai_data[['title', 'snippet']].to_string(index=False))
+            if not ai_data.empty:
+                news_list.append("【RSS 权威资讯】:\n" + ai_data.head(10)[['title', 'summary']].to_string(index=False))
+            
+            combined_news_context = "\n\n".join(news_list)
+
+        with col_topics:
+            st.subheader("💡 公众号选题推荐")
+            
+            if not combined_news_context:
+                st.warning("暂无足够的新闻数据来生成选题。")
+            else:
+                generate_btn = st.button("✨ 利用豆包生成选题", type="primary", key="btn_generate_topics")
+                
+                if generate_btn:
+                    if not doubao_client.api_key:
+                        st.error("请先配置 Doubao API Key")
+                    else:
+                        with st.spinner("豆包正在分析新闻并构思选题..."):
+                            prompt = f"""
+                            你是一位专业的科技自媒体主编。请根据左侧提供的今日 AI 资讯（包含联网搜索和 RSS 聚合），为我策划 3 个微信公众号文章选题。
+                            
+                            资讯内容如下：
+                            {combined_news_context[:8000]} (已截断)
+                            
+                            要求：
+                            1. **选题要有爆款潜质**：结合今日热点，标题要吸引人（提供2-3个备选标题）。
+                            2. **覆盖不同角度**：例如技术解读、行业影响、工具推荐等。
+                            3. **输出格式**：
+                                - **选题 X**：[核心主题]
+                                - **推荐标题**：
+                                    1. ...
+                                    2. ...
+                                - **内容大纲**：简要列出文章结构 (引言、正文要点、结尾)。
+                                - **推荐理由**：为什么这个选题会火？
+                            """
+                            
+                            try:
+                                stream = doubao_client.generate_summary(prompt, context_type="Topic Generation")
+                                st.write_stream(stream)
+                            except Exception as e:
+                                st.error(f"生成失败: {e}")
 

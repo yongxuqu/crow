@@ -1068,6 +1068,86 @@ def get_xhs_trends(target_date=None):
         
     return pd.DataFrame(final_items)
 
+def get_web_ai_news(target_date=None):
+    """
+    通过 Serper/DDG 搜索全网 AI 重大新闻 (Web Search)
+    补充 RSS 的不足
+    """
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    query_date = target_date.strftime('%Y-%m-%d') if target_date else today_str
+    
+    # 构造搜索词
+    queries = [
+        f"AI artificial intelligence news {query_date}",
+        f"LLM large language model new release {query_date}",
+        f"AI technology breakthrough {query_date}",
+        f"人工智能 重大新闻 {query_date}",
+        f"大模型 最新发布 {query_date}"
+    ]
+    
+    all_items = []
+    seen_links = set()
+    
+    # 尝试 Serper
+    api_key = st.secrets.get("SERPER_API_KEY") or os.environ.get("SERPER_API_KEY")
+    if api_key:
+        url = "https://google.serper.dev/search"
+        headers = {
+            'X-API-KEY': api_key,
+            'Content-Type': 'application/json'
+        }
+        
+        for q in queries[:3]: # 只跑前3个避免消耗过多
+            try:
+                payload = json.dumps({
+                    "q": q,
+                    "tbs": "qdr:d", # 过去24小时
+                    "num": 5
+                })
+                response = requests.request("POST", url, headers=headers, data=payload, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()
+                    results = data.get("organic", [])
+                    for res in results:
+                        link = res.get("link")
+                        if not link or link in seen_links:
+                            continue
+                        
+                        all_items.append({
+                            'source': 'Web Search (Serper)',
+                            'title': res.get("title"),
+                            'link': link,
+                            'snippet': res.get("snippet", ""),
+                            'published_str': today_str
+                        })
+                        seen_links.add(link)
+            except Exception as e:
+                print(f"Error fetching web AI news via Serper: {e}")
+    
+    # 如果 Serper 没数据或没配置，尝试 DDG
+    if not all_items and DDGS:
+        for q in queries:
+            try:
+                with DDGS() as ddgs:
+                    results = list(ddgs.text(q, region='wt-wt', safesearch='off', time='d', max_results=5))
+                    for res in results:
+                        link = res.get("href")
+                        if not link or link in seen_links:
+                            continue
+                        
+                        all_items.append({
+                            'source': 'Web Search (DDG)',
+                            'title': res.get("title"),
+                            'link': link,
+                            'snippet': res.get("body", ""),
+                            'published_str': today_str
+                        })
+                        seen_links.add(link)
+            except Exception as e:
+                print(f"Error fetching web AI news via DDG: {e}")
+                
+    return pd.DataFrame(all_items)
+
 if __name__ == "__main__":
     # Test
     print("Testing Reddit Fetcher...")
