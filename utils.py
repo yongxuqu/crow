@@ -902,27 +902,30 @@ def get_xhs_trends(target_date=None):
         print(f"Querying DB for XHS on {query_date}...")
         db_data = get_xhs_from_db(query_date)
         if db_data:
-            # 检查是否是已知的脏数据 (Mock Data 或无效抓取数据)
-            # 特征：标题包含 "求一个能自动给美妆产品试色的APP" 或 标题是 URL 或 包含 user/profile
-            is_dirty = False
+            # 过滤脏数据，而不是直接丢弃整天的数据
+            valid_data = []
             for row in db_data:
                 title = row.get('title', '')
                 link = row.get('link', '')
+                is_dirty_row = False
+                
                 if "求一个能自动给美妆产品试色的APP" in title:
-                    is_dirty = True
-                    break
-                if title.startswith("http") or "xiaohongshu.com" in title:
-                    is_dirty = True
-                    break
-                if "user/profile" in link:
-                    is_dirty = True
-                    break
+                    is_dirty_row = True
+                elif title.startswith("http") or "xiaohongshu.com" in title:
+                    is_dirty_row = True
+                elif "user/profile" in link:
+                    is_dirty_row = True
+                
+                if not is_dirty_row:
+                    valid_data.append(row)
             
-            if is_dirty:
-                 print(f"Found dirty data in DB for {query_date}. Ignoring it.")
-                 return pd.DataFrame() # 返回空，让它不要显示假数据
-                 
-            return pd.DataFrame(db_data)
+            if len(valid_data) < len(db_data):
+                print(f"Filtered out {len(db_data) - len(valid_data)} dirty rows for {query_date}.")
+            
+            if valid_data:
+                return pd.DataFrame(valid_data)
+            else:
+                return pd.DataFrame() # 全是脏数据或无数据
         else:
             return pd.DataFrame() # 历史无数据
             
@@ -931,27 +934,33 @@ def get_xhs_trends(target_date=None):
     print(f"Checking DB for XHS on {today_str}...")
     db_data = get_xhs_from_db(today_str)
     if db_data:
-        is_dirty = False
+        # 过滤脏数据
+        valid_data = []
         for row in db_data:
             title = row.get('title', '')
             link = row.get('link', '')
+            is_dirty_row = False
+            
             if "求一个能自动给美妆产品试色的APP" in title:
-                is_dirty = True
-                break
-            if title.startswith("http") or "xiaohongshu.com" in title:
-                is_dirty = True
-                break
-            if "user/profile" in link:
-                is_dirty = True
-                break
+                is_dirty_row = True
+            elif title.startswith("http") or "xiaohongshu.com" in title:
+                is_dirty_row = True
+            elif "user/profile" in link:
+                is_dirty_row = True
+            
+            if not is_dirty_row:
+                valid_data.append(row)
         
-        if is_dirty:
-            print("Found dirty data in DB for TODAY. Deleting and re-fetching...")
+        if len(valid_data) < len(db_data):
+            print(f"Found {len(db_data) - len(valid_data)} dirty rows in DB for TODAY.")
+        
+        if valid_data:
+            print("Found valid data in DB for TODAY.")
+            return pd.DataFrame(valid_data)
+        else:
+            print("Only dirty data in DB for TODAY. Deleting and re-fetching...")
             delete_xhs_for_date(today_str)
             # 继续往下执行抓取逻辑
-        else:
-            print("Found valid data in DB for TODAY.")
-            return pd.DataFrame(db_data)
     
     base_terms = [
         '美妆 痛点 吐槽',
@@ -1027,9 +1036,18 @@ def get_xhs_trends(target_date=None):
         # 检查内容相关性
         title = item.get('title', '')
         snippet = item.get('snippet', '')
+        link = item.get('link', '')
         text_check = f"{title} {snippet}"
         
-        # 如果是 Search 来源，必须检查关键词；Explore 来源理论上已经检查过了，但再查一次也无妨
+        # 1. 过滤脏数据/技术性垃圾
+        if "求一个能自动给美妆产品试色的APP" in title:
+            continue
+        if title.startswith("http") or "xiaohongshu.com" in title:
+            continue
+        if "user/profile" in link:
+            continue
+        
+        # 2. 如果是 Search 来源，必须检查关键词；Explore 来源理论上已经检查过了，但再查一次也无妨
         if not keyword_re.search(text_check):
             # 只有当 title 很短且 snippet 为空时，可能会误杀。但宁可误杀不可放过无关内容。
             # 稍微放宽一点：如果来源是 Explore，我们信任它的内部过滤（除非内部过滤失效）
