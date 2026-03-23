@@ -1148,6 +1148,119 @@ def get_web_ai_news(target_date=None):
                 
     return pd.DataFrame(all_items)
 
+def get_douyin_hot(target_date=None):
+    """
+    获取抖音热榜，并过滤出音乐相关和odd（拍摄风格）相关的内容
+    """
+    url = "https://v.api.aa1.cn/api/douyin-hot/"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
+    
+    music_keywords = ['音乐', '歌', '唱', '乐', '曲', '演唱', '伴奏', 'MV', '专辑', '翻唱', 'BGM', '歌手', '演唱会', '说唱', '电音']
+    odd_keywords = ['odd', '拍摄', '运镜', '转场', '镜头', '卡点', '摄影', '大片', '高级感', 'vlog', 'plog', '质感']
+    
+    items = []
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            text = response.text
+            # 处理可能的 trailing garbage bytes
+            if '}' in text:
+                text = text.rsplit('}', 1)[0] + '}'
+            data = json.loads(text)
+            word_list = data.get('data', {}).get('word_list', [])
+            
+            for index, word_item in enumerate(word_list):
+                word = word_item.get('word', '')
+                hot_value = word_item.get('hot_value', 0)
+                
+                # Check categories
+                word_lower = word.lower()
+                is_music = any(k.lower() in word_lower for k in music_keywords)
+                is_odd = any(k.lower() in word_lower for k in odd_keywords)
+                
+                category = []
+                if is_music:
+                    category.append('🎵 音乐')
+                if is_odd:
+                    category.append('🎥 ODD/拍摄')
+                    
+                if category:
+                    items.append({
+                        'rank': index + 1,
+                        'title': word,
+                        'hot_value': hot_value,
+                        'category': " | ".join(category),
+                        'link': f"https://www.douyin.com/search/{urllib.parse.quote(word)}"
+                    })
+                    
+    except Exception as e:
+        print(f"Error fetching Douyin hot trends: {e}")
+        
+    return pd.DataFrame(items)
+
+def get_douyin_creators(target_date=None):
+    """
+    抓取指定 ODD 博主的视频数据
+    (注：抖音无免费稳定的用户主页 API，此处使用模拟数据展示，若需真实数据需接入商业 API 或带 Cookie 的爬虫)
+    """
+    creators = ['Ato', 'eeet', 'Bmy', '19w', 'Eiden', 'Leafyi']
+    
+    # Mock data to demonstrate the structure
+    mock_data = [
+        {
+            'creator': 'Ato',
+            'title': '今天的运镜也是绝绝子！卡点也太爽了吧',
+            'likes': '12.5w',
+            'views': '150.2w',
+            'music': '原声 - Ato (ODD卡点专属)',
+            'link': 'https://www.douyin.com/user/Ato_mock'
+        },
+        {
+            'creator': 'eeet',
+            'title': '高级感Vlog，教你如何用手机拍出大片质感',
+            'likes': '8.3w',
+            'views': '98.5w',
+            'music': 'Sunset Lover - Petit Biscuit',
+            'link': 'https://www.douyin.com/user/eeet_mock'
+        },
+        {
+            'creator': 'Bmy',
+            'title': '这个转场你学废了吗？一镜到底挑战！',
+            'likes': '25.1w',
+            'views': '320.4w',
+            'music': 'Bmy的专属BGM',
+            'link': 'https://www.douyin.com/user/Bmy_mock'
+        },
+        {
+            'creator': '19w',
+            'title': '赛博朋克风格街拍，这运镜没谁了',
+            'likes': '5.6w',
+            'views': '66.8w',
+            'music': 'Cyberpunk 2077 Theme',
+            'link': 'https://www.douyin.com/user/19w_mock'
+        },
+        {
+            'creator': 'Eiden',
+            'title': '日常碎片plog，慢节奏生活记录',
+            'likes': '15.8w',
+            'views': '210.3w',
+            'music': '治愈系轻音乐',
+            'link': 'https://www.douyin.com/user/Eiden_mock'
+        },
+        {
+            'creator': 'Leafyi',
+            'title': '创意运镜教学：如何让你的视频更有质感',
+            'likes': '19.2w',
+            'views': '245.6w',
+            'music': 'Dynamic Rhythm',
+            'link': 'https://www.douyin.com/user/Leafyi_mock'
+        }
+    ]
+    
+    return pd.DataFrame(mock_data)
+
 if __name__ == "__main__":
     # Test
     print("Testing Reddit Fetcher...")

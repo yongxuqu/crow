@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
-from utils import get_reddit_hot, get_ai_news, get_github_trending, get_xhs_trends, get_web_ai_news
+from utils import get_reddit_hot, get_ai_news, get_github_trending, get_xhs_trends, get_web_ai_news, get_douyin_hot, get_douyin_creators
 from db_utils import supabase
 from ai_helper import get_doubao_client
 from datetime import datetime, date
@@ -99,15 +99,17 @@ def load_data(target_date):
     xhs_trends = get_xhs_trends(target_date)
     # Web AI News (实时搜索，不一定非要缓存很久，但为了性能还是缓存一下)
     web_ai_news = get_web_ai_news(target_date)
-    return ai_news, reddit_hot, github_trending, xhs_trends, web_ai_news
+    douyin_hot = get_douyin_hot(target_date)
+    douyin_creators_data = get_douyin_creators(target_date)
+    return ai_news, reddit_hot, github_trending, xhs_trends, web_ai_news, douyin_hot, douyin_creators_data
 
 # 加载数据
 with st.spinner('正在获取最新数据...'):
-    ai_data, reddit_data, github_data, xhs_data, web_ai_data = load_data(selected_date)
+    ai_data, reddit_data, github_data, xhs_data, web_ai_data, douyin_data, douyin_creators = load_data(selected_date)
 
 # 翻译处理逻辑
 if enable_translation and doubao_client.api_key:
-    translate_cache_key = f"trans_{selected_date}_{len(ai_data)}_{len(reddit_data)}_{len(github_data)}_{len(web_ai_data)}"
+    translate_cache_key = f"trans_{selected_date}_{len(ai_data)}_{len(reddit_data)}_{len(github_data)}_{len(web_ai_data)}_{len(douyin_data)}_{len(douyin_creators)}"
     
     if "translation_cache" not in st.session_state:
         st.session_state["translation_cache"] = {}
@@ -185,17 +187,17 @@ if enable_translation and doubao_client.api_key:
                 if "snippet" in results["web"]: web_ai_data['snippet'] = results["web"]["snippet"]
 
             # Store in cache
-            st.session_state["translation_cache"][translate_cache_key] = (ai_data, reddit_data, github_data, web_ai_data)
+            st.session_state["translation_cache"][translate_cache_key] = (ai_data, reddit_data, github_data, web_ai_data, douyin_data, douyin_creators)
     else:
         # Load from cache
-        ai_data, reddit_data, github_data, web_ai_data = st.session_state["translation_cache"][translate_cache_key]
+        ai_data, reddit_data, github_data, web_ai_data, douyin_data, douyin_creators = st.session_state["translation_cache"][translate_cache_key]
 
 # 检查是否有数据
-if ai_data.empty and reddit_data.empty and github_data.empty and xhs_data.empty and web_ai_data.empty:
+if ai_data.empty and reddit_data.empty and github_data.empty and xhs_data.empty and web_ai_data.empty and douyin_data.empty and douyin_creators.empty:
     st.warning(f"没有找到 {selected_date} 的归档数据。如果是今天，可能是网络问题；如果是历史日期，说明当时没有抓取。")
 else:
     # 页面布局
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🤖 每日 AI 动态", "🔥 独立开发热门", "📈 GitHub 热榜", "📕 小红书热点", "🧠 豆包 AI 助手", "📰 AI新闻 & 选题"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["🤖 每日 AI 动态", "🔥 独立开发热门", "📈 GitHub 热榜", "📕 小红书热点", "🎵 抖音热榜", "🎬 ODD博主追踪", "🧠 豆包 AI 助手", "📰 AI新闻 & 选题"])
 
     with tab1:
         st.header("每日 AI 最新动态 (RSS聚合)")
@@ -284,6 +286,45 @@ else:
                 """)
 
     with tab5:
+        st.header("🎵 抖音热榜 (音乐/ODD拍摄)")
+        st.caption("数据来源: 抖音热搜榜，聚合关键词：音乐/ODD/拍摄/运镜等")
+        if not douyin_data.empty:
+            st.dataframe(
+                douyin_data[['rank', 'title', 'category', 'hot_value', 'link']],
+                column_config={
+                    "link": st.column_config.LinkColumn("链接"),
+                    "title": "话题",
+                    "category": "分类",
+                    "hot_value": "热度",
+                    "rank": "排名"
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+        else:
+            st.info("今日暂无符合条件（音乐/ODD拍摄）的抖音热榜数据")
+
+    with tab6:
+        st.header("🎬 ODD 博主视频追踪")
+        st.caption("追踪特定 ODD 风格博主（Ato、eeet、Bmy、19w、Eiden、Leafyi）的最新视频数据")
+        if not douyin_creators.empty:
+            st.dataframe(
+                douyin_creators[['creator', 'title', 'likes', 'views', 'music', 'link']],
+                column_config={
+                    "creator": "博主",
+                    "title": "视频标题",
+                    "likes": "点赞量",
+                    "views": "浏览量",
+                    "music": "使用音乐",
+                    "link": st.column_config.LinkColumn("主页/视频链接")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+        else:
+            st.info("暂无博主数据")
+
+    with tab7:
         st.header("🧠 豆包 AI 智能分析")
         
         if not doubao_client.api_key:
@@ -298,7 +339,9 @@ else:
             "每日 AI 动态": ai_data,
             "Reddit 独立开发热门": reddit_data,
             "GitHub 热榜": github_data,
-            "小红书热点": xhs_data
+            "小红书热点": xhs_data,
+            "抖音热榜": douyin_data,
+            "ODD博主": douyin_creators
         }
         
         selected_option = st.selectbox("选择要分析的数据板块:", list(data_options.keys()))
@@ -363,7 +406,7 @@ else:
                     
                     st.session_state["ai_chat_history"].append({"role": "assistant", "content": full_response})
 
-    with tab6:
+    with tab8:
         st.header("📰 AI 咨询 & 公众号选题策划")
         st.caption("利用豆包大模型联网搜索 (Web Search) + 聚合 RSS 资讯，为您生成深度选题。")
         
